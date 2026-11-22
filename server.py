@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Path: server.py
 """
 Stash - a tiny self-hosted data vault.
 
@@ -14,7 +15,7 @@ Settings (environment variables):
     STASH_HOST      bind address   (default 0.0.0.0 with a password, else 127.0.0.1)
     STASH_PORT      port           (default 8080)
     STASH_DATA      data directory (default ./data next to this file)
-    STASH_MAX_MB    max size of one upload in MB (default 2048)
+    STASH_MAX_MB    max size of one upload in MB (default 10)
     STASH_API_KEY   key the Android app (or scripts) send as "Authorization: Bearer <key>".
                     If unset and a password is set, one is generated on first start and
                     stored in <data>/api.key. Delete that file and restart to rotate it.
@@ -49,7 +50,7 @@ TMP = DATA / "tmp"
 PASSWORD = os.environ.get("STASH_PASSWORD", "")
 PORT = int(os.environ.get("STASH_PORT", "8080"))
 HOST = os.environ.get("STASH_HOST") or ("0.0.0.0" if PASSWORD else "127.0.0.1")
-MAX_BYTES = int(float(os.environ.get("STASH_MAX_MB", "2048")) * 1024 * 1024)
+MAX_BYTES = int(float(os.environ.get("STASH_MAX_MB", "10")) * 1024 * 1024)
 RESERVE = 64 * 1024 * 1024  # never fill the disk completely
 CHUNK = 256 * 1024
 SESSION_SECS = 30 * 86400
@@ -296,21 +297,35 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-    def _authed(self):
+    def _authed(self, quiet=False):
+        """quiet=True is for GET /api/session, which only reports the state: a wrong key there is
+        not a login attempt, so it is never delayed or answered with 429 (it just says false). A wrong key is still
+        counted, so the route cannot be used to guess keys without limit."""
         if not PASSWORD:
             return True
         auth = self.headers.get("Authorization", "")
         if auth[:7].lower() == "bearer ":
-            return self._check_api_key(auth[7:].strip())
+            return self._check_api_key(auth[7:].strip(), quiet)
         try:
             morsel = SimpleCookie(self.headers.get("Cookie", "")).get(COOKIE)
         except CookieError:
             return False
         return bool(morsel) and check_token(morsel.value)
 
-    def _check_api_key(self, given):
+    def _check_api_key(self, given, quiet=False):
         ip = self.client_address[0]
-        if rate_limited(ip):
+        limited = rate_limited(ip)
+        if quiet:
+            # Never delays and never answers 429, but a wrong key is still counted, so this route cannot be used to
+            # guess keys faster than the others: after 10 misses the client is rate limited everywhere (and here the
+            # key is no longer checked at all, so "authed" stays false until the window ends).
+            if limited or not API_KEY:
+                return False
+            if hmac.compare_digest(given.encode("utf-8"), API_KEY.encode("utf-8")):
+                return True
+            note_fail(ip)
+            return False
+        if limited:
             raise ApiError(429, "Too many attempts. Try again in a few minutes.")
         if API_KEY and hmac.compare_digest(given.encode("utf-8"), API_KEY.encode("utf-8")):
             return True
@@ -370,7 +385,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._index()
         if p == "/api/session":
             return self._json(200, {"name": "stash", "api": API_VERSION, "authRequired": bool(PASSWORD),
-                                    "authed": self._authed(), "maxBytes": MAX_BYTES})
+                                    "authed": self._authed(quiet=True), "maxBytes": MAX_BYTES})
         if p == "/healthz":
             return self._json(200, {"ok": True})
         if not p.startswith("/api/"):
