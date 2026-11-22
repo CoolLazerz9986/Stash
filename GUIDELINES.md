@@ -2,7 +2,7 @@
 
 Read this first. Everything here is already settled, so don't ask about it.
 
-**Also read:** `rules.md` (code rules) · `Tasks.md` (what's next) · the changelog (what changed) · `API.md` (the server contract) · `TESTING.md`
+**Also read:** `RULES.md` (code rules) · `TASKS.md` (what's next) · `CHANGELOG.md` (what changed) · `API.md` (the server contract) · `TESTING.md`
 
 ---
 
@@ -47,7 +47,7 @@ Anything else gets added here when something breaks.
 
 ## 6. Code rules
 
-See `rules.md`. Don't repeat them here.
+See `RULES.md`. Don't repeat them here.
 
 ## 7. Limits
 
@@ -60,7 +60,7 @@ Max upload size is configurable via `STASH_MAX_MB`. Default: **10 MB**.
 
 ## 9. Status and next steps
 
-`Tasks.md` for what's next, the changelog for what's done.
+`TASKS.md` for what's next, `CHANGELOG.md` for what's done.
 
 ## 10. Access
 

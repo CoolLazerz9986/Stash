@@ -21,7 +21,7 @@ Status: **alpha**. Settled decisions are in [`GUIDELINES.md`](GUIDELINES.md); th
 | [`android/README.md`](android/README.md) | the Android app |
 | [`GUIDELINES.md`](GUIDELINES.md) | project verdicts, hardware limits, how work is delivered |
 | [`RULES.md`](RULES.md) | rules for every AI and human working on Stash: roles, hard constraints, handoff |
-| `REPORTS.MD` | report layout for each role (engineer, tester, scribe) |
+| [`REPORTS.MD`](REPORTS.MD) | report layout for each role (engineer, tester, scribe) |
 | [`CHANGELOG.md`](CHANGELOG.md) | what changed, newest update first |
 | [`TASKS.md`](TASKS.md) | open problems, planned work, handoff |
 | `stash-architecture.html`, `stash-android-architecture.html` | interactive diagrams (open in a browser) |
@@ -109,7 +109,7 @@ The `stash` user needs write access to `STASH_DATA`.
 - This speaks plain HTTP. To use it over the internet, put it behind a reverse proxy that adds HTTPS (Caddy or nginx); it honours `X-Forwarded-Proto` for secure cookies. Reverse proxies need their upload size limit raised to match `STASH_MAX_MB`.
 - Back up the whole `data/` folder to back up everything. It includes `secret.key` and `api.key`; they are in `.gitignore` and must stay out of git.
 - Uploaded files are never executed or rendered as web pages: HTML and scripts are shown as plain text, SVG runs sandboxed.
-- Login is a single shared password with a rate limit (10 wrong tries per 5 minutes per address). It is not per-user accounts. The rate limit is shared by wrong passwords and wrong API keys, per client address. `GET /api/session` is not a login attempt: a wrong key there is not counted.
+- Login is a single shared password with a rate limit (10 wrong tries per 5 minutes per address). It is not per-user accounts. The rate limit is shared by wrong passwords and wrong API keys, per client address. `GET /api/session` is only a status check: a wrong key there is never delayed and never answered with 429 (it just reports `"authed": false`), but it is still counted toward the 10, so it can't be used to guess keys. Once an address is blocked, `authed` stays false there even for the right key until the 5 minutes end.
 - Sessions are stateless cookies lasting 30 days. "Log out" removes the cookie from that browser only; to cut off every logged-in device, change `STASH_PASSWORD` and restart.
 - The API key is a second way in, as powerful as the password for everything under `/api`. Treat `api.key` like the password. Behind a reverse proxy, every client may look like the same address to the rate limiter.
 - Every route and header is documented in [`API.md`](API.md).

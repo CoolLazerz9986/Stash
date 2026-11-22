@@ -34,6 +34,7 @@ Enable "Install unknown apps" on the phone if you copy the APK over by hand.
 2. Open the app, type the server address, **log in to the website** inside the app.
 3. Tap the sliders icon in the header → switch on **Back up this phone to Stash**, allow photo access (allow "all", not "selected photos").
    Also allow notifications and location-in-photos if asked: the first shows progress, the second keeps GPS data in the copied photos.
+   On Android 13 and newer, location-in-photos is granted together with "Photos and videos", so you may see no separate prompt or toggle for it.
 4. The first run uploads everything that is selected, so leave the phone on Wi-Fi and charging. Progress is in the notification and on the settings screen.
 
 ## Files (app/src/main/java/app/stash/android)
@@ -56,10 +57,12 @@ The only change to the website itself (`../index.html`) is a hidden header butto
 ## Known limits (v1)
 
 - **No resumable uploads.** If a big video is interrupted (app killed, Wi-Fi lost), that file restarts from zero next run. Finished files are never repeated.
+- **Files over the server's limit** (`STASH_MAX_MB`, 10 MB by default) are not uploaded. The backup status counts them as "too big" and they are not recorded as done, so they are picked up again after the limit is raised.
 - **Flat vault.** The server has no folders yet, so backed-up files land in one list. Two different photos with the same name get `name (1).jpg`; identical ones are skipped by hash.
 - **One shared key** for all devices (the server has no per-user accounts).
 - Cleartext `http://` is allowed everywhere (LAN servers have no certificate). Set `cleartextTrafficPermitted="false"` in `res/xml/network_security_config.xml` if you put it behind HTTPS.
 - A hash is computed for every new file on the phone before upload (needed for de-duplication). Big videos take a while on a slow phone.
 - Android may delay background jobs on phones with aggressive battery savers; exempt the app from battery optimisation if the hourly run doesn't happen.
 - Downloads show a toast, not a progress bar.
-- Not tested on a real device in this session. The code compiles against the Android 34 SDK; the HTTP client and the server were tested together (see `../TESTING.md`).
+- If location-in-photos access is denied (possible below Android 13), the photos are copied without their GPS data and the backup screen does not say so.
+- Tested on one real phone so far (Infinix X6882, Android 14: backup run and permissions). Other phones and Android versions are untested. The code compiles against the Android 34 SDK; the HTTP client and the server were tested together (see `../TESTING.md`).

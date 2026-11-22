@@ -16,7 +16,9 @@ Otherwise a request is authenticated by **either**:
 
 The key is `STASH_API_KEY`, or the contents of `<data>/api.key` (generated on first start). A logged-in session can read it with `GET /api/app-key`.
 If an `Authorization: Bearer` header is present it is used and the cookie is ignored.
-Wrong passwords and wrong keys share one rate limit: 10 failures per 5 minutes per client address, then `429` (even for the right key, until the window ends).
+Wrong passwords and wrong keys share one rate limit: 10 failures per 5 minutes per client address, then `429` (even for the right key, until the window ends). Every wrong password or key is also delayed by 0.6 s.
+
+`GET /api/session` is only a status check, not a login attempt, so it is the one route that never answers `429` and never delays: with a wrong `Bearer` key it answers `200` straight away with `"authed": false`. A wrong key there still counts toward the 10 failures, so the route can't be used to guess keys without limit. While a client address is blocked, `authed` is `false` there even for the right key, until the window ends.
 
 Sessions are stateless: `POST /api/logout` only clears the cookie. Changing `STASH_PASSWORD` (or deleting `secret.key`) invalidates every session.
 
@@ -26,7 +28,7 @@ Sessions are stateless: `POST /api/logout` only clears the cookie. Changing `STA
 |---|---|---|---|
 | GET | `/` , `/index.html` | no | the website |
 | GET | `/healthz` | no | `{"ok": true}` |
-| GET | `/api/session` | no | `{"name":"stash","api":2,"authRequired":bool,"authed":bool,"maxBytes":int}`. Clients use `name`/`api` to recognise a compatible server. `api` is `1` (field absent) on the original server. |
+| GET | `/api/session` | no | `{"name":"stash","api":2,"authRequired":bool,"authed":bool,"maxBytes":int}`. Clients use `name`/`api` to recognise a compatible server. `api` is `1` (field absent) on the original server. `maxBytes` is the upload limit (default 10 MB). A wrong `Bearer` key gives `authed:false` (see Authentication) |
 | POST | `/api/login` | no | body `{"password": "..."}` → sets cookie. `401` wrong password, `429` too many tries |
 | POST | `/api/logout` | no | clears the cookie |
 | GET | `/api/app-key` | yes | `{"key": "<api key>"}` (empty string when the server has no password and no `STASH_API_KEY`) |
@@ -70,13 +72,14 @@ If the client disconnects mid-upload, the partial file is deleted and nothing is
 | 413 | upload over `maxBytes`, or a request body over its limit (64 KB for JSON, 1 MB for the zip form) |
 | 416 | `Range` outside the file |
 | 422 | `X-Sha256` doesn't match the received bytes |
-| 429 | rate limited (wrong password / key) |
+| 429 | rate limited (wrong password / key). Never sent by `GET /api/session` |
 | 500 | server bug (see its log) |
 | 507 | not enough free disk |
 
 ## Backup client algorithm (Android app v1)
 
 For each photo/video not yet recorded as done: hash it (SHA-256) → `GET /api/files/by-hash/<sha>` → if `exists`, record and skip → else `POST /api/upload` with `X-Sha256` → on `201` record it. Files are matched to what was already done by (MediaStore URI, size, modified time). One-way: nothing is ever deleted on the phone or on the server by the backup.
+A file bigger than `maxBytes` (from `GET /api/session`) is not hashed or uploaded and is **not** recorded, so it is picked up again once the limit is raised. The same goes for a `413` answer.
 
 ## Compatibility
 
