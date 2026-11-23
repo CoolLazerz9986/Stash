@@ -1,0 +1,146 @@
+<!doctype html>
+<!-- Path: chats.html -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stash chats</title>
+<style>
+/* First version, deliberately plain: another pass will restyle it. Same colour variables as index.html. */
+:root{--bg:#f5f6f9;--panel:#fff;--ink:#14171f;--muted:#6a7384;--line:#e4e7ee;--accent:#5b5bf0;--accent-ink:#fff;--me:#e3e3ff;--them:#fff;--danger:#e5484d}
+[data-theme=dark]{--bg:#0d0f14;--panel:#161920;--ink:#e8ebf2;--muted:#8a92a5;--line:#262a35;--accent:#8080ff;--accent-ink:#0d0f14;--me:#2a2c5c;--them:#1d2029}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column}
+button,input{font:inherit;color:inherit}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header b{font-size:17px}
+header a,.link{color:var(--accent);text-decoration:none;cursor:pointer;background:none;border:0;padding:0}
+header .sp{flex:1}
+header small{color:var(--muted)}
+#app{flex:1;display:flex;min-height:0}
+#list{width:340px;max-width:100%;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+#list input{margin:10px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:var(--bg);outline:none}
+#rows{overflow:auto;flex:1}
+.chat{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;padding:10px 14px;cursor:pointer}
+.chat:hover,.chat.on{background:var(--bg)}
+.chat .top{display:flex;gap:8px}
+.chat .nm{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat .tm,.chat .pv{color:var(--muted);font-size:13px}
+.chat .pv{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#pane{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+#bar{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+#bar b{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#bar input{padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--bg);width:170px;outline:none}
+#msgs{flex:1;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:4px}
+.day{align-self:center;background:var(--panel);border:1px solid var(--line);color:var(--muted);font-size:12.5px;border-radius:999px;padding:2px 12px;margin:8px 0}
+.m{max-width:min(75%,620px);padding:6px 10px;border-radius:12px;background:var(--them);border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+.m.me{align-self:flex-end;background:var(--me)}
+.m .who{font-size:12.5px;font-weight:600;color:var(--accent)}
+.m .lab{color:var(--muted);font-style:italic}
+.m .t{display:block;text-align:right;color:var(--muted);font-size:11.5px}
+.more{align-self:center}
+.empty{margin:auto;color:var(--muted);text-align:center;padding:30px}
+#back{display:none}
+@media (max-width:760px){
+  #list{width:100%}
+  #pane{display:none}
+  body.open #list{display:none}
+  body.open #pane{display:flex}
+  #back{display:inline}
+  #bar input{width:110px}
+}
+</style>
+</head>
+<body>
+<header>
+  <b>WhatsApp chats</b><small id="info"></small><span class="sp"></span><a href="/">Files</a>
+</header>
+<div id="app">
+  <section id="list"><input id="filter" type="search" placeholder="Search chats" autocomplete="off"><div id="rows"></div></section>
+  <section id="pane">
+    <div id="bar"><button id="back" class="link">&larr; Chats</button><b id="title"></b><input id="q" type="search" placeholder="Search in chat" autocomplete="off"></div>
+    <div id="msgs"><div class="empty">Pick a chat on the left.</div></div>
+  </section>
+</div>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+try { const t = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); document.documentElement.dataset.theme = t; } catch {}
+let chats = [], cur = null, firstId = 0, loading = false;
+
+async function api(path) {
+  const r = await fetch(path, {credentials: 'same-origin'});
+  if (r.status === 401) { location.href = '/'; throw new Error('login'); }
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch {} throw new Error(m); }
+  return r.json();
+}
+const fmtDay = ts => new Date(ts * 1000).toLocaleDateString(undefined, {weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'});
+const fmtTime = ts => new Date(ts * 1000).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'});
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+async function boot() {
+  try {
+    const d = await api('/api/chats');
+    chats = d.chats;
+    if (!d.snapshot) { $('#rows').replaceChildren(el('div', 'empty', 'No chats yet. In the Android app: Phone backup > WhatsApp chats.')); return; }
+    $('#info').textContent = d.snapshot.messages.toLocaleString() + ' messages, backed up ' + new Date(d.snapshot.ts * 1000).toLocaleString();
+    drawList();
+  } catch (e) { if (e.message !== 'login') $('#rows').replaceChildren(el('div', 'empty', e.message)); }
+}
+
+function drawList() {
+  const f = $('#filter').value.trim().toLowerCase();
+  const rows = chats.filter(c => !f || c.name.toLowerCase().includes(f)).map(c => {
+    const b = el('button', 'chat' + (cur && cur.id === c.id ? ' on' : ''));
+    const top = el('div', 'top'); top.append(el('span', 'nm', c.name), el('span', 'tm', c.last ? fmtDay(c.last.ts) : ''));
+    b.append(top, el('div', 'pv', c.last ? (c.last.me ? 'You: ' : '') + c.last.text : ''));
+    b.onclick = () => openChat(c);
+    return b;
+  });
+  $('#rows').replaceChildren(...(rows.length ? rows : [el('div', 'empty', 'Nothing matches.')]));
+}
+
+async function openChat(c) {
+  cur = c; firstId = 0; $('#q').value = ''; $('#title').textContent = c.name;
+  document.body.classList.add('open'); drawList();
+  $('#msgs').replaceChildren();
+  await load(false);
+  const m = $('#msgs'); m.scrollTop = m.scrollHeight;
+}
+
+async function load(older) {
+  if (loading || !cur) return; loading = true;
+  const id = cur.id, q = $('#q').value.trim();
+  try {
+    const d = await api('/api/chats/' + id + '/messages?limit=100' + (older && firstId ? '&before=' + firstId : '') + (q ? '&q=' + encodeURIComponent(q) : ''));
+    if (!cur || cur.id !== id) return;
+    const box = $('#msgs'), oldHeight = box.scrollHeight;
+    box.querySelector('.more')?.remove();
+    const frag = document.createDocumentFragment();
+    if (d.more) { const b = el('button', 'link more', 'Load earlier messages'); b.onclick = () => load(true); frag.append(b); }
+    let day = '';
+    for (const m of d.messages) {
+      const dd = fmtDay(m.ts);
+      if (dd !== day) { day = dd; frag.append(el('div', 'day', dd)); }
+      const b = el('div', 'm' + (m.me ? ' me' : ''));
+      if (m.sender && cur.group) b.append(el('div', 'who', '+' + m.sender));
+      if (m.label) b.append(el('span', 'lab', '[' + m.label + '] '));
+      b.append(document.createTextNode(m.text), el('span', 't', fmtTime(m.ts)));
+      frag.append(b);
+    }
+    if (!d.messages.length && !older) frag.append(el('div', 'empty', q ? 'No message contains that.' : 'Empty chat.'));
+    if (d.messages.length) firstId = d.messages[0].id;
+    if (older) { const first = box.querySelector('.day'); if (first && first.textContent === day) first.remove(); box.prepend(frag); box.scrollTop = box.scrollHeight - oldHeight; }
+    else box.append(frag);
+  } catch (e) { if (e.message !== 'login') $('#msgs').append(el('div', 'empty', e.message)); }
+  finally { loading = false; }
+}
+
+$('#filter').oninput = drawList;
+$('#back').onclick = () => document.body.classList.remove('open');
+let qt; $('#q').oninput = () => { clearTimeout(qt); qt = setTimeout(async () => { firstId = 0; $('#msgs').replaceChildren(); await load(false); const m = $('#msgs'); m.scrollTop = m.scrollHeight; }, 350); };
+boot();
+</script>
+</body>
+</html>

@@ -1,3 +1,4 @@
+// Path: android/app/src/main/java/app/stash/android/MainActivity.kt
 package app.stash.android
 
 import android.annotation.SuppressLint
@@ -59,7 +60,15 @@ class MainActivity : ComponentActivity() {
                 ) { result -> if (result != "1") moveTaskToBack(true) }
             }
         })
-        load()
+        load(intent.getStringExtra(EXTRA_PATH) ?: "/")
+    }
+
+    /** Started again with a page to show (the "Open chats" button on the backup screen). */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val path = intent.getStringExtra(EXTRA_PATH)
+        if (path != null && ::web.isInitialized) load(path)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -163,11 +172,12 @@ class MainActivity : ComponentActivity() {
         errorBox.visibility = View.VISIBLE
     }
 
-    private fun load() {
+    /** [path] is a page on your server: "/" (files) or "/chats". Only paths starting with "/" are accepted. */
+    private fun load(path: String = "/") {
         base = prefs.serverUrl
         hasError = false
         errorBox.visibility = View.GONE
-        web.loadUrl("$base/")
+        web.loadUrl(base + (if (path.startsWith("/")) path else "/"))
     }
 
     override fun onResume() {
@@ -208,5 +218,10 @@ class MainActivity : ComponentActivity() {
         fun openSettings() {
             runOnUiThread { startActivity(Intent(this@MainActivity, BackupActivity::class.java)) }
         }
+    }
+
+    companion object {
+        /** Intent extra: which page of the server to open ("/chats"). */
+        const val EXTRA_PATH = "path"
     }
 }

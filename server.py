@@ -19,6 +19,10 @@ Settings (environment variables):
     STASH_API_KEY   key the Android app (or scripts) send as "Authorization: Bearer <key>".
                     If unset and a password is set, one is generated on first start and
                     stored in <data>/api.key. Delete that file and restart to rotate it.
+    STASH_CHATS_MAX_MB  max size of one WhatsApp chat database in MB (default 512; separate from STASH_MAX_MB)
+    STASH_CHATS_KEEP    how many chat database snapshots to keep (default 3, 0 = keep all)
+
+The WhatsApp chat vault lives in chats.py (next to this file).
 """
 import hashlib
 import hmac
@@ -43,6 +47,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+import chats
+
 BASE = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("STASH_DATA", str(BASE / "data"))).resolve()
 BLOBS = DATA / "blobs"
@@ -51,6 +57,8 @@ PASSWORD = os.environ.get("STASH_PASSWORD", "")
 PORT = int(os.environ.get("STASH_PORT", "8080"))
 HOST = os.environ.get("STASH_HOST") or ("0.0.0.0" if PASSWORD else "127.0.0.1")
 MAX_BYTES = int(float(os.environ.get("STASH_MAX_MB", "10")) * 1024 * 1024)
+CHATS_MAX_BYTES = int(float(os.environ.get("STASH_CHATS_MAX_MB", "512")) * 1024 * 1024)
+CHATS_KEEP = int(os.environ.get("STASH_CHATS_KEEP", "3"))
 RESERVE = 64 * 1024 * 1024  # never fill the disk completely
 CHUNK = 256 * 1024
 SESSION_SECS = 30 * 86400
@@ -58,8 +66,9 @@ COOKIE = "stash_session"
 ID_RE = re.compile(r"[0-9a-f]{32}")
 FILE_ROUTE = re.compile(r"/api/files/([0-9a-f]{32})(?:/(download|raw))?")
 HASH_ROUTE = re.compile(r"/api/files/by-hash/([0-9a-fA-F]{64})")
+CHAT_MSGS = re.compile(r"/api/chats/(\d{1,12})/messages")
 SHA_RE = re.compile(r"[0-9a-f]{64}")
-API_VERSION = 2  # 1 = original website API, 2 = adds API key, by-hash lookup, X-Sha256 check
+API_VERSION = 2  # 1 = original website API, 2 = adds API key, by-hash lookup, X-Sha256 check (chat routes extend 2, see API.md)
 
 INDEX_CSP = (
     "default-src 'self'; script-src 'self' 'unsafe-inline'; "
@@ -92,6 +101,7 @@ def init():
     global DB, KEY, API_KEY
     for d in (DATA, BLOBS, TMP):
         d.mkdir(parents=True, exist_ok=True)
+    chats.init(DATA, CHATS_KEEP, CHATS_MAX_BYTES)
     for leftover in TMP.glob("*"):  # unfinished uploads from a previous run
         try:
             leftover.unlink()
@@ -382,7 +392,9 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p, qs = u.path, parse_qs(u.query)
         if p in ("/", "/index.html"):
-            return self._index()
+            return self._page("index.html")
+        if p in ("/chats", "/chats.html"):
+            return self._page("chats.html")
         if p == "/api/session":
             return self._json(200, {"name": "stash", "api": API_VERSION, "authRequired": bool(PASSWORD),
                                     "authed": self._authed(quiet=True), "maxBytes": MAX_BYTES})
@@ -395,6 +407,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._list()
         if p == "/api/app-key":
             return self._json(200, {"key": API_KEY})
+        if p == "/api/chats" or p.startswith("/api/chats/"):
+            return self._chats_get(p, qs)
         m = HASH_ROUTE.fullmatch(p)
         if m:
             return self._by_hash(m.group(1).lower())
@@ -410,11 +424,11 @@ class Handler(BaseHTTPRequestHandler):
         hit = next((r for r in row if (BLOBS / r["id"]).is_file()), None)
         self._json(200, {"exists": hit is not None, "file": row_dict(hit) if hit else None})
 
-    def _index(self):
+    def _page(self, name):
         try:
-            body = (BASE / "index.html").read_bytes()
+            body = (BASE / name).read_bytes()
         except OSError:
-            raise ApiError(500, "index.html is missing next to server.py")
+            raise ApiError(500, "%s is missing next to server.py" % name)
         self._send(200, body, "text/html; charset=utf-8",
                    {"Content-Security-Policy": INDEX_CSP, "Cache-Control": "no-cache"})
 
@@ -426,6 +440,24 @@ class Handler(BaseHTTPRequestHandler):
             "files": files,
             "stats": {"count": len(files), "bytes": sum(f["size"] for f in files), **disk_info()},
         })
+
+    def _chats_get(self, p, qs):
+        try:
+            if p == "/api/chats/status":
+                return self._json(200, chats.status())
+            if p == "/api/chats":
+                return self._json(200, chats.overview())
+            m = CHAT_MSGS.fullmatch(p)
+            if m:
+                try:
+                    before = int(qs.get("before", ["0"])[0] or 0)
+                    limit = int(qs.get("limit", ["100"])[0] or 100)
+                except ValueError:
+                    raise ApiError(400, "before and limit must be numbers")
+                return self._json(200, chats.messages(int(m.group(1)), before, limit, qs.get("q", [""])[0][:100]))
+        except chats.ChatError as e:
+            raise ApiError(e.status, e.message)
+        raise ApiError(404, "Not found")
 
     def _file(self, fid, mode, qs):
         row = get_row(fid)
@@ -511,6 +543,8 @@ class Handler(BaseHTTPRequestHandler):
         self._need_auth()
         if p == "/api/upload":
             return self._upload()
+        if p == "/api/chats/import":
+            return self._chats_import()
         if p == "/api/zip":
             return self._zip()
         raise ApiError(404, "Not found")
@@ -586,6 +620,43 @@ class Handler(BaseHTTPRequestHandler):
                 raise
             row = DB.execute("SELECT * FROM files WHERE id = ?", (fid,)).fetchone()
         self._json(201, row_dict(row))
+
+    def _chats_import(self):
+        """Raw body = a plain (already decrypted) WhatsApp msgstore.db. Same headers as /api/upload."""
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            raise ApiError(411, "Content-Length header is required")
+        if length <= 0:
+            raise ApiError(400, "Bad Content-Length")
+        if length > CHATS_MAX_BYTES:
+            raise ApiError(413, "The chat database is larger than the %d MB limit (STASH_CHATS_MAX_MB)" % (CHATS_MAX_BYTES // 1048576))
+        if length + length // 4 + RESERVE > disk_info()["free"]:
+            raise ApiError(507, "Not enough free disk space on the server")
+        want = self.headers.get("X-Sha256", "").strip().lower()
+        if want and not SHA_RE.fullmatch(want):
+            raise ApiError(400, "X-Sha256 must be 64 hex characters")
+        if not chats.IMPORTING.acquire(blocking=False):
+            raise ApiError(409, "Another chat import is still running, try again later")
+        try:
+            tmp = TMP / (uuid.uuid4().hex + ".chat")
+            try:
+                digest = chats.receive(self.rfile, length, tmp)
+            except (ConnectionError, socket.timeout, TimeoutError):
+                self.close_connection = True
+                return
+            except OSError:
+                raise ApiError(507, "Could not write the file to disk")
+            if want and digest != want:
+                chats._rm(tmp)
+                raise ApiError(422, "Checksum mismatch: the upload was corrupted in transit, please retry")
+            try:
+                snap = chats.add_snapshot(tmp, digest)
+            except chats.ChatError as e:
+                raise ApiError(e.status, e.message)
+            self._json(201, snap)
+        finally:
+            chats.IMPORTING.release()
 
     def _zip(self):
         form = parse_qs(self._read_body(1 << 20).decode("utf-8", "replace"))
