@@ -6,32 +6,48 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Stash chats</title>
 <style>
-/* First version, deliberately plain: another pass will restyle it. Same colour variables as index.html. */
-:root{--bg:#f5f6f9;--panel:#fff;--ink:#14171f;--muted:#6a7384;--line:#e4e7ee;--accent:#5b5bf0;--accent-ink:#fff;--me:#e3e3ff;--them:#fff;--danger:#e5484d}
-[data-theme=dark]{--bg:#0d0f14;--panel:#161920;--ink:#e8ebf2;--muted:#8a92a5;--line:#262a35;--accent:#8080ff;--accent-ink:#0d0f14;--me:#2a2c5c;--them:#1d2029}
-*{box-sizing:border-box}
+/* Same colour variables as index.html. Buttons share the website's press feedback (they sink a little when tapped). */
+:root{--bg:#f5f6f9;--panel:#fff;--ink:#14171f;--muted:#6a7384;--line:#e4e7ee;--accent:#5b5bf0;--accent-ink:#fff;--accent-soft:#ececfe;--me:#e3e3ff;--them:#fff;--danger:#e5484d}
+[data-theme=dark]{--bg:#0d0f14;--panel:#161920;--ink:#e8ebf2;--muted:#8a92a5;--line:#262a35;--accent:#8080ff;--accent-ink:#0d0f14;--accent-soft:#23254d;--me:#2a2c5c;--them:#1d2029}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column}
 button,input{font:inherit;color:inherit}
-header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
-header b{font-size:17px}
-header a,.link{color:var(--accent);text-decoration:none;cursor:pointer;background:none;border:0;padding:0}
-header .sp{flex:1}
-header small{color:var(--muted)}
+svg.i{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* buttons: same look and press feel as index.html */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid transparent;background:transparent;padding:8px;border-radius:10px;cursor:pointer;color:inherit;text-decoration:none;touch-action:manipulation;transition:transform .08s,filter .08s,background .15s,border-color .15s}
+.btn:hover{background:color-mix(in srgb,var(--ink) 7%,transparent)}
+.btn:active{transform:scale(.92);background:color-mix(in srgb,var(--ink) 12%,transparent)}
+.btn:focus-visible,.chat:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.btn.pill{border-color:var(--line);background:var(--panel);padding:6px 14px;border-radius:999px;font-size:13.5px}
+.btn.pill:hover{border-color:color-mix(in srgb,var(--ink) 25%,var(--line))}
+.btn.pill:active{transform:scale(.95)}
+
+header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+header b{font-size:17px;white-space:nowrap}
+header small{color:var(--muted);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
 #app{flex:1;display:flex;min-height:0}
 #list{width:340px;max-width:100%;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
-#list input{margin:10px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:var(--bg);outline:none}
+.sbox{position:relative;margin:10px}
+.sbox svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+.sbox input{width:100%;padding:8px 12px 8px 36px;border:1px solid var(--line);border-radius:999px;background:var(--bg);outline:none}
+.sbox input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 #rows{overflow:auto;flex:1}
-.chat{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;padding:10px 14px;cursor:pointer}
+.chat{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;padding:10px 14px;cursor:pointer;touch-action:manipulation;transition:transform .08s,background .15s}
 .chat:hover,.chat.on{background:var(--bg)}
+.chat:active{transform:scale(.98);background:color-mix(in srgb,var(--ink) 9%,transparent)}
 .chat .top{display:flex;gap:8px}
 .chat .nm{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chat .tm,.chat .pv{color:var(--muted);font-size:13px}
 .chat .pv{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
 #pane{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
-#bar{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+#bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--panel)}
 #bar b{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#bar input{padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--bg);width:170px;outline:none}
+#qrow{padding:0 12px 10px;background:var(--panel);border-bottom:1px solid var(--line)}
+#qrow .sbox{margin:0}
 #msgs{flex:1;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:4px}
 .day{align-self:center;background:var(--panel);border:1px solid var(--line);color:var(--muted);font-size:12.5px;border-radius:999px;padding:2px 12px;margin:8px 0}
 .m{max-width:min(75%,620px);padding:6px 10px;border-radius:12px;background:var(--them);border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
@@ -39,7 +55,7 @@ header small{color:var(--muted)}
 .m .who{font-size:12.5px;font-weight:600;color:var(--accent)}
 .m .lab{color:var(--muted);font-style:italic}
 .m .t{display:block;text-align:right;color:var(--muted);font-size:11.5px}
-.more{align-self:center}
+.more{align-self:center;margin:4px 0}
 .empty{margin:auto;color:var(--muted);text-align:center;padding:30px}
 #back{display:none}
 @media (max-width:760px){
@@ -47,19 +63,27 @@ header small{color:var(--muted)}
   #pane{display:none}
   body.open #list{display:none}
   body.open #pane{display:flex}
-  #back{display:inline}
-  #bar input{width:110px}
+  #back{display:inline-flex}
 }
+@media (prefers-reduced-motion:reduce){.btn:active,.chat:active{transform:none}}
 </style>
 </head>
 <body>
 <header>
-  <b>WhatsApp chats</b><small id="info"></small><span class="sp"></span><a href="/">Files</a>
+  <a class="btn" id="home" href="/" title="Back to files" aria-label="Back to files"><svg class="i" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></a>
+  <b>WhatsApp chats</b><small id="info"></small>
 </header>
 <div id="app">
-  <section id="list"><input id="filter" type="search" placeholder="Search chats" autocomplete="off"><div id="rows"></div></section>
+  <section id="list">
+    <div class="sbox"><svg class="i" viewBox="0 0 24 24"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z"/><path d="M21 21l-4.3-4.3"/></svg><input id="filter" type="search" placeholder="Search chats" autocomplete="off"></div>
+    <div id="rows"></div>
+  </section>
   <section id="pane">
-    <div id="bar"><button id="back" class="link">&larr; Chats</button><b id="title"></b><input id="q" type="search" placeholder="Search in chat" autocomplete="off"></div>
+    <div id="bar">
+      <button id="back" class="btn" type="button" title="Back to chats" aria-label="Back to chats"><svg class="i" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <b id="title"></b>
+    </div>
+    <div id="qrow"><div class="sbox"><svg class="i" viewBox="0 0 24 24"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z"/><path d="M21 21l-4.3-4.3"/></svg><input id="q" type="search" placeholder="Search in this chat" autocomplete="off"></div></div>
     <div id="msgs"><div class="empty">Pick a chat on the left.</div></div>
   </section>
 </div>
@@ -93,6 +117,7 @@ function drawList() {
   const f = $('#filter').value.trim().toLowerCase();
   const rows = chats.filter(c => !f || c.name.toLowerCase().includes(f)).map(c => {
     const b = el('button', 'chat' + (cur && cur.id === c.id ? ' on' : ''));
+    b.type = 'button';
     const top = el('div', 'top'); top.append(el('span', 'nm', c.name), el('span', 'tm', c.last ? fmtDay(c.last.ts) : ''));
     b.append(top, el('div', 'pv', c.last ? (c.last.me ? 'You: ' : '') + c.last.text : ''));
     b.onclick = () => openChat(c);
@@ -109,6 +134,16 @@ async function openChat(c) {
   const m = $('#msgs'); m.scrollTop = m.scrollHeight;
 }
 
+/* narrow screens show either the chat list or one chat; this goes from the chat back to the list */
+function closeChat() { document.body.classList.remove('open'); }
+
+/* The Android app calls this when the back gesture / back button is used. true = handled here, false = the app goes on
+   (back to the files page). Only handled while a chat covers the list, i.e. on a narrow screen. */
+window.stashBack = function () {
+  if (document.body.classList.contains('open') && matchMedia('(max-width:760px)').matches) { closeChat(); return true; }
+  return false;
+};
+
 async function load(older) {
   if (loading || !cur) return; loading = true;
   const id = cur.id, q = $('#q').value.trim();
@@ -118,7 +153,7 @@ async function load(older) {
     const box = $('#msgs'), oldHeight = box.scrollHeight;
     box.querySelector('.more')?.remove();
     const frag = document.createDocumentFragment();
-    if (d.more) { const b = el('button', 'link more', 'Load earlier messages'); b.onclick = () => load(true); frag.append(b); }
+    if (d.more) { const b = el('button', 'btn pill more', 'Load earlier messages'); b.type = 'button'; b.onclick = () => load(true); frag.append(b); }
     let day = '';
     for (const m of d.messages) {
       const dd = fmtDay(m.ts);
@@ -138,7 +173,7 @@ async function load(older) {
 }
 
 $('#filter').oninput = drawList;
-$('#back').onclick = () => document.body.classList.remove('open');
+$('#back').onclick = closeChat;
 let qt; $('#q').oninput = () => { clearTimeout(qt); qt = setTimeout(async () => { firstId = 0; $('#msgs').replaceChildren(); await load(false); const m = $('#msgs'); m.scrollTop = m.scrollHeight; }, 350); };
 boot();
 </script>

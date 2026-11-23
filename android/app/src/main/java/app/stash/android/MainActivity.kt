@@ -7,6 +7,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -58,10 +59,19 @@ class MainActivity : ComponentActivity() {
         buildUi()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                // close the website's open dialog (file viewer / confirm box) first, otherwise leave the app
+                // Back, one step at a time: 1) close the website's open dialog (file viewer / confirm box),
+                // 2) let the page handle it if it can (the chats page goes from an open chat back to its list),
+                // 3) any page other than the files page goes back to the files page, 4) on the files page, leave the app.
                 web.evaluateJavascript(
-                    "(function(){var d=document.querySelector('dialog[open]');if(d){d.close();return 1}return 0})()"
-                ) { result -> if (result != "1") moveTaskToBack(true) }
+                    "(function(){var d=document.querySelector('dialog[open]');if(d){d.close();return 1}" +
+                        "if(window.stashBack&&window.stashBack())return 1;return 0})()"
+                ) { result ->
+                    if (result != "1") {
+                        val path = try { Uri.parse(web.url ?: "").path ?: "/" } catch (e: Exception) { "/" }
+                        val onHome = path.isEmpty() || path == "/" || path == "/index.html"
+                        if (!onHome && !hasError) load("/") else moveTaskToBack(true)
+                    }
+                }
             }
         })
         load(intent.getStringExtra(EXTRA_PATH) ?: "/")
@@ -129,6 +139,7 @@ class MainActivity : ComponentActivity() {
                     Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
                         .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                 }
+                startAtStorageRoot(intent)
                 return try {
                     chooser.launch(intent)
                     true
@@ -169,6 +180,21 @@ class MainActivity : ComponentActivity() {
             addView(web)
             addView(errorBox, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         })
+    }
+
+    /**
+     * Android's file picker remembers the last folder an app browsed. Once the user has picked the WhatsApp folder for
+     * the chat backup (BackupActivity / WaSource.pickerStart), every later "Upload" would open there. So the website's
+     * chooser names its own start folder (the phone's main storage). Only the chat folder picker starts in WhatsApp.
+     * It is an OPEN_DOCUMENT request because that is the action EXTRA_INITIAL_URI is documented for; the type,
+     * "multiple" flag and OPENABLE category from the WebView's own intent are kept.
+     */
+    private fun startAtStorageRoot(intent: Intent) {
+        intent.action = Intent.ACTION_OPEN_DOCUMENT
+        intent.putExtra(
+            DocumentsContract.EXTRA_INITIAL_URI,
+            DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:"),
+        )
     }
 
     private fun showError(message: String) {
@@ -223,8 +249,10 @@ class MainActivity : ComponentActivity() {
         if (url.isEmpty()) {
             startActivity(Intent(this, SetupActivity::class.java))
             finish()
-        } else if (url != base) {
-            load() // server address was changed in settings
+        } else if (url != base || hasError) {
+            // address changed in settings, or we come back (e.g. from "Change server" with the same address) while the
+            // "Can't reach" screen is still showing: check again instead of leaving the old error on screen
+            load()
         }
     }
 
