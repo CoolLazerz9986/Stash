@@ -223,8 +223,10 @@ class MainActivity : ComponentActivity() {
         if (url.isEmpty()) {
             startActivity(Intent(this, SetupActivity::class.java))
             finish()
-        } else if (url != base) {
-            load() // server address was changed in settings
+        } else if (url != base || hasError) {
+            // address changed in settings, or we come back (e.g. from "Change server" with the same address) while the
+            // "Can't reach" screen is still showing: check again instead of leaving the old error on screen
+            load()
         }
     }
 
