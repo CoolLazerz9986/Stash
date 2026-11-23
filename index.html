@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- Path: index.html -->
 <html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
@@ -37,6 +38,7 @@ svg.i{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;st
 .btn.ghost{border-color:transparent;background:transparent}
 .btn.ghost:hover{background:color-mix(in srgb,var(--ink) 7%,transparent)}
 .btn.icon{padding:8px;border-radius:10px}
+a.btn{color:inherit;text-decoration:none}
 .btn.sm{padding:5px 10px;font-size:13px}
 .field{width:100%;padding:10px 12px;border:1px solid var(--line);background:var(--bg);border-radius:10px;outline:none}
 .field:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
@@ -228,6 +230,7 @@ button,.card,.row,.drop,.chip{touch-action:manipulation}
   <div class="brand"><div class="tile" id="logo"></div><span>Stash</span></div>
   <div class="search"><span id="searchIcon"></span><input class="field" id="q" type="search" placeholder="Search your files   ( / )" autocomplete="off"></div>
   <div class="hactions">
+    <a class="btn ghost icon" id="chatsBtn" href="/chats" title="WhatsApp chats"></a>
     <button class="btn ghost icon" id="appBtn" title="Phone backup &amp; app settings" hidden></button>
     <button class="btn ghost icon" id="theme" title="Toggle dark mode"></button>
     <button class="btn ghost icon" id="logout" title="Log out" hidden></button>
@@ -300,7 +303,8 @@ const ICONS = {
   box:'M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z M3.3 7L12 12l8.7-5 M12 22V12',
   check:'M20 6L9 17l-5-5',
   refresh:'M23 4v6h-6 M1 20v-6h6 M3.5 9a9 9 0 0 1 14.9-3.4L23 10 M1 14l4.6 4.4A9 9 0 0 0 20.5 15',
-  sliders:'M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6'
+  sliders:'M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6',
+  chat:'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
 };
 function ic(name){
   const s = document.createElementNS('http://www.w3.org/2000/svg','svg');
@@ -760,7 +764,7 @@ setTheme(store.get('theme', matchMedia('(prefers-color-scheme: dark)').matches ?
 $('#theme').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 
 $('#logo').append(ic('box')); $('#loginIcon').append(ic('lock')); $('#dropIcon').append(ic('upload'));
-$('#searchIcon').append(ic('search')); $('#ovIcon').append(ic('upload')); $('#logout').append(ic('logout'));
+$('#chatsBtn').append(ic('chat')); $('#searchIcon').append(ic('search')); $('#ovIcon').append(ic('upload')); $('#logout').append(ic('logout'));
 if (window.StashApp) { const b = $('#appBtn'); b.hidden = false; b.append(ic('sliders')); b.onclick = () => StashApp.openSettings(); }  // only inside the Android app
 $('#upClear').append(ic('x')); $('#upClear').onclick = () => jobs.slice().forEach(dismiss);
 $('#uploadBtn').append(ic('upload'), 'Upload');

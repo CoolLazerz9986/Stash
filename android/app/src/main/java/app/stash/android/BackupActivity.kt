@@ -4,6 +4,9 @@ package app.stash.android
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
@@ -31,6 +34,7 @@ class BackupActivity : ComponentActivity() {
     private lateinit var chatFolderButton: android.widget.Button
     private lateinit var chatStatusText: TextView
     private var updating = false
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> runOnUiThread { refresh() } }
 
@@ -152,15 +156,56 @@ class BackupActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         prefs.listen(prefListener)
+        watchNetwork()
         refresh()
     }
 
     override fun onStop() {
         prefs.unlisten(prefListener)
+        unwatchNetwork()
         super.onStop()
     }
 
+    /** Refreshes the screen when the phone gains or loses a network, so "Waiting for Wi-Fi" appears and clears on its own. */
+    private fun watchNetwork() {
+        if (netCallback != null) return
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                runOnUiThread { if (!isFinishing) refresh() }
+            }
+
+            override fun onLost(network: Network) {
+                runOnUiThread { if (!isFinishing) refresh() }
+            }
+        }
+        try {
+            cm.registerDefaultNetworkCallback(cb)
+            netCallback = cb
+        } catch (e: RuntimeException) {
+            // no network watching: the screen still updates whenever it is opened or a setting changes
+        }
+    }
+
+    private fun unwatchNetwork() {
+        val cb = netCallback ?: return
+        netCallback = null
+        try {
+            getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb)
+        } catch (e: RuntimeException) {
+        }
+    }
+
+    /** Shows the short toast when a queued run will not start because "Wi-Fi only" is on and there is no Wi-Fi. */
+    private fun queued(what: String) {
+        toast(
+            if (BackupScheduler.waitingForWifi(this)) "$what queued. It starts when Wi-Fi connects (Wi-Fi only is on)"
+            else "$what queued"
+        )
+    }
+
     private fun refresh() {
+        BackupScheduler.noteWifiWait(this) // only touches an empty / idle / already-"Waiting for Wi-Fi" status
         updating = true
         enableSwitch.isChecked = prefs.backupEnabled
         chatSwitch.isChecked = prefs.chatEnabled
@@ -226,6 +271,7 @@ class BackupActivity : ComponentActivity() {
                     BackupScheduler.apply(this)
                     BackupScheduler.runNow(this)
                     refresh()
+                    if (BackupScheduler.waitingForWifi(this)) queued("Backup")
                 }
             } catch (e: Exception) {
                 runOnUiThread {
@@ -244,7 +290,7 @@ class BackupActivity : ComponentActivity() {
             return
         }
         BackupScheduler.runNow(this)
-        toast("Backup queued")
+        queued("Backup")
     }
 
     // ---- WhatsApp chats ----
@@ -288,6 +334,7 @@ class BackupActivity : ComponentActivity() {
                     BackupScheduler.applyChat(this)
                     BackupScheduler.runChatNow(this, true)
                     refresh()
+                    if (BackupScheduler.waitingForWifi(this)) queued("Chat backup")
                 }
             } catch (e: Exception) {
                 runOnUiThread {
@@ -313,7 +360,7 @@ class BackupActivity : ComponentActivity() {
             return
         }
         BackupScheduler.runChatNow(this, true)
-        toast("Chat backup queued")
+        queued("Chat backup")
     }
 
     private fun chooseFolders() {

@@ -25,7 +25,10 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import java.net.ConnectException
+import java.net.SocketTimeoutException
 import java.net.URLEncoder
+import java.net.UnknownHostException
 
 /** Hosts the Stash website (served by your own server) in a WebView and adds what a browser tab can't do. */
 class MainActivity : ComponentActivity() {
@@ -35,6 +38,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var errorText: TextView
     private var base = ""
     private var hasError = false
+    private var loadToken = 0
     private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     private val chooser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
@@ -172,12 +176,44 @@ class MainActivity : ComponentActivity() {
         errorBox.visibility = View.VISIBLE
     }
 
-    /** [path] is a page on your server: "/" (files) or "/chats". Only paths starting with "/" are accepted. */
+    /** Same wording as the setup screen, so an unreachable server reads the same everywhere. */
+    private fun friendly(e: Exception): String = when (e) {
+        is UnknownHostException -> "Can't find that address."
+        is ConnectException -> "The server refused the connection."
+        is SocketTimeoutException -> "Timed out."
+        else -> e.message ?: "Could not connect"
+    }
+
+    /**
+     * [path] is a page on your server: "/" (files) or "/chats". Only paths starting with "/" are accepted.
+     * The server is checked first with the app's own 8-second connect timeout (StashApi.session): if it does not
+     * answer, the error screen shows at once instead of after the WebView's own (very long) give-up time.
+     */
     private fun load(path: String = "/") {
         base = prefs.serverUrl
         hasError = false
         errorBox.visibility = View.GONE
-        web.loadUrl(base + (if (path.startsWith("/")) path else "/"))
+        val server = base
+        val target = server + (if (path.startsWith("/")) path else "/")
+        val token = ++loadToken
+        Thread {
+            val problem: String? = try {
+                StashApi.session(server)
+                null
+            } catch (e: Exception) {
+                friendly(e)
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed || token != loadToken) return@runOnUiThread // a newer load took over
+                if (problem == null) {
+                    web.loadUrl(target)
+                } else {
+                    hasError = true
+                    web.stopLoading()
+                    showError("Can't reach $server\n\n$problem\n\nIs the server running and is this phone on the same network?")
+                }
+            }
+        }.start()
     }
 
     override fun onResume() {
