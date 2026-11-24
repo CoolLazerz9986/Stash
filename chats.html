@@ -30,7 +30,7 @@ svg.i{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;st
 /* ---- loading: splash (first open), thin busy bar (any request), spinner (waiting for content) ---- */
 @keyframes show{from{opacity:0}to{opacity:1}}
 @keyframes spin{to{transform:rotate(360deg)}}
-@keyframes busy{from{left:-40%}to{left:100%}}
+@keyframes busy{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
 @keyframes spIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:none}}
 @keyframes spPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
 #splash{position:fixed;inset:0;z-index:100;display:grid;place-items:center;align-content:center;gap:18px;background:var(--bg);transition:opacity .4s ease}
@@ -39,7 +39,7 @@ svg.i{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;st
 .sp-logo{width:64px;height:64px;display:grid;place-items:center;border-radius:18px;color:var(--accent-ink);background:var(--accent);animation:spIn .45s ease both,spPulse 1.6s ease-in-out .45s infinite}
 .sp-logo svg{width:34px;height:34px}
 .sp-bar{width:120px;height:3px;border-radius:3px;background:var(--line);overflow:hidden;position:relative;animation:show .45s ease both}
-.sp-bar i,#busy i{position:absolute;top:0;bottom:0;width:40%;background:var(--accent);border-radius:3px;animation:busy 1.1s ease-in-out infinite}
+.sp-bar i,#busy i{position:absolute;top:0;bottom:0;left:0;width:40%;background:var(--accent);border-radius:3px;animation:busy 1.1s ease-in-out infinite}
 #busy{position:fixed;left:0;right:0;top:0;height:3px;z-index:95;overflow:hidden;opacity:0;transition:opacity .3s;pointer-events:none}
 #busy.on{opacity:1}
 .loading{display:grid;place-items:center;padding:40px;opacity:0;animation:show .3s .15s both}
@@ -48,15 +48,17 @@ svg.i{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;st
 
 /* ---- slide transitions between pages (the page wrapper moves; see the script) ---- */
 #page{flex:1;display:flex;flex-direction:column;min-height:0}
-@keyframes inLeft{from{transform:translateX(-24%);opacity:.5}to{transform:none;opacity:1}}
-@keyframes inRight{from{transform:translateX(100%);box-shadow:-14px 0 30px rgba(0,0,0,.18)}to{transform:none}}
-@keyframes outRight{to{transform:translateX(100%);box-shadow:-14px 0 30px rgba(0,0,0,.18)}}
-@keyframes outLeft{to{transform:translateX(-24%);opacity:.5}}
+@keyframes inLeft{from{transform:translateX(-24%)}to{transform:none}}
+@keyframes inRight{from{transform:translateX(100%)}to{transform:none}}
+@keyframes outRight{to{transform:translateX(100%)}}
+@keyframes outLeft{to{transform:translateX(-24%)}}
 @keyframes paneIn{from{transform:translateX(100%)}to{transform:none}}
 .enter-back #page{animation:inLeft .26s cubic-bezier(.2,.8,.2,1)}
 .enter-fwd #page{animation:inRight .26s cubic-bezier(.2,.8,.2,1)}
 .leave-back #page{animation:outRight .2s ease-in forwards}
 .leave-fwd #page{animation:outLeft .2s ease-in forwards}
+/* only transform is animated (no opacity: a faded full-screen layer is costly on a weak GPU), and the layer is promoted up front */
+.enter-fwd #page,.enter-back #page,.leave-fwd #page,.leave-back #page{will-change:transform}
 
 /* buttons: same look and press feel as index.html */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid transparent;background:transparent;padding:8px;border-radius:10px;cursor:pointer;color:inherit;text-decoration:none;touch-action:manipulation;transition:transform .08s,filter .08s,background .15s,border-color .15s}
@@ -153,6 +155,11 @@ body.has-chat #qrow{display:block}
 'use strict';
 const $ = s => document.querySelector(s);
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* Heavy work (building the chat list or 100 messages) waits until a slide has finished; run in the middle of the animation
+   it makes the slide stutter. Returns a promise to wait on, or null when there is nothing to wait for. */
+const SLID = document.documentElement.classList.contains('enter-back') || document.documentElement.classList.contains('enter-fwd');
+const afterMs = ms => REDUCE ? null : new Promise(r => setTimeout(r, ms));
+const afterSlide = () => SLID ? afterMs(280) : null;
 const narrow = () => matchMedia('(max-width:760px)').matches;
 const narrowOpen = () => narrow() && document.body.classList.contains('open');
 let chats = [], cur = null, firstId = 0, seq = 0, loadingMore = false;
@@ -182,21 +189,29 @@ async function api(path) {
     return await r.json();
   } finally { busy(-1); }
 }
-const fmtDay = ts => new Date(ts * 1000).toLocaleDateString(undefined, {weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'});
-const fmtTime = ts => new Date(ts * 1000).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'});
+/* Intl formatters are slow to create, and these run for every message and every chat, so they are made once. */
+const DF_DAY = new Intl.DateTimeFormat(undefined, {weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'});
+const DF_TIME = new Intl.DateTimeFormat(undefined, {hour: '2-digit', minute: '2-digit'});
+const DF_WEEKDAY = new Intl.DateTimeFormat(undefined, {weekday: 'short'});
+const DF_MD = new Intl.DateTimeFormat(undefined, {month: 'short', day: 'numeric'});
+const DF_YMD = new Intl.DateTimeFormat(undefined, {year: '2-digit', month: 'short', day: 'numeric'});
+const fmtDay = ts => DF_DAY.format(new Date(ts * 1000));
+const fmtTime = ts => DF_TIME.format(new Date(ts * 1000));
 /* short date for the chat list: time today, weekday this week, otherwise a short date */
 function fmtList(ts) {
   const d = new Date(ts * 1000), now = new Date();
   if (d.toDateString() === now.toDateString()) return fmtTime(ts);
-  if ((now - d) / 864e5 < 7) return d.toLocaleDateString(undefined, {weekday: 'short'});
-  return d.toLocaleDateString(undefined, d.getFullYear() === now.getFullYear() ? {month: 'short', day: 'numeric'} : {year: '2-digit', month: 'short', day: 'numeric'});
+  if ((now - d) / 864e5 < 7) return DF_WEEKDAY.format(d);
+  return (d.getFullYear() === now.getFullYear() ? DF_MD : DF_YMD).format(d);
 }
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function spin() { const d = el('div', 'loading'); d.append(document.createElement('i')); return d; }
 
 async function boot() {
   try {
+    const wait = afterSlide();
     const d = await api('/api/chats');
+    if (wait) await wait;
     chats = d.chats;
     if (!d.snapshot) { $('#rows').replaceChildren(el('div', 'empty', 'No chats yet. In the Android app: Phone backup > WhatsApp chats.')); return; }
     $('#info').textContent = d.snapshot.messages.toLocaleString() + ' messages, backed up ' + new Date(d.snapshot.ts * 1000).toLocaleString();
@@ -209,7 +224,7 @@ function drawList() {
   const f = $('#filter').value.trim().toLowerCase();
   const rows = chats.filter(c => !f || c.name.toLowerCase().includes(f)).map(c => {
     const b = el('button', 'chat' + (cur && cur.id === c.id ? ' on' : ''));
-    b.type = 'button';
+    b.type = 'button'; b.dataset.id = c.id;
     const top = el('div', 'top'); top.append(el('span', 'nm', c.name), el('span', 'tm', c.last ? fmtList(c.last.ts) : ''));
     b.append(top, el('div', 'pv', c.last ? (c.last.me ? 'You: ' : '') + c.last.text : ''));
     b.onclick = () => openChat(c);
@@ -224,8 +239,10 @@ async function openChat(c) {
   b.classList.add('has-chat');
   /* narrow screens: the chat slides in from the right over the list (the list stays visible during the slide) */
   if (narrow() && !b.classList.contains('open') && !REDUCE) { b.classList.add('peek'); setTimeout(() => { if (!drag) b.classList.remove('peek'); }, 300); }
-  b.classList.add('open'); drawList();
-  await load(false);
+  b.classList.add('open');
+  /* mark the open chat without rebuilding the whole list (hundreds of buttons) in the middle of the slide */
+  for (const e of $('#rows').children) e.classList.toggle('on', e.dataset.id === String(c.id));
+  await load(false, narrow() ? afterMs(280) : null);
   const m = $('#msgs'); m.scrollTop = m.scrollHeight;
 }
 
@@ -237,7 +254,7 @@ let leaving = false;
 function resetLeave() {
   leaving = false;
   document.documentElement.classList.remove('leave-back');
-  const p = $('#page'); p.style.transition = p.style.transform = p.style.boxShadow = '';
+  const p = $('#page'); p.style.transition = p.style.transform = p.style.boxShadow = p.style.willChange = '';
   try { sessionStorage.removeItem('stash-nav'); } catch {}
 }
 function goHome(already) { // already = the swipe has moved the page off screen
@@ -264,7 +281,8 @@ function settle(commit) {
   el.style.transform = 'translateX(' + (commit ? innerWidth : 0) + 'px)';
   setTimeout(() => {
     el.style.transition = '';
-    if (commit && !d.pane) { goHome(true); return; } // the page stays off screen until the files page loads
+    if (commit && !d.pane) { goHome(true); return; }
+    el.style.willChange = ''; // the page stays off screen until the files page loads
     el.style.transform = el.style.boxShadow = '';
     document.body.classList.remove('peek');
     if (commit) closeChat();
@@ -277,35 +295,42 @@ function slideCloseChat() {
   drag = {on: true, pane: true, el: $('#pane'), dx: 0, t: 0};
   requestAnimationFrame(() => settle(true));
 }
+/* The touchmove listener is only attached while a swipe that began at the edge is tracked: a permanent non-passive
+   touchmove listener would make every scroll on this page wait for JavaScript (laggy on a slow phone). */
+function stopMove() { removeEventListener('touchmove', onMove); }
 addEventListener('touchstart', e => {
-  drag = null;
+  drag = null; stopMove();
   if (leaving || e.touches.length !== 1) return;
   const t = e.touches[0];
-  if (t.clientX <= EDGE) drag = {x: t.clientX, y: t.clientY, dx: 0, on: false, t: Date.now(), el: null, pane: false};
+  if (t.clientX <= EDGE) {
+    drag = {x: t.clientX, y: t.clientY, dx: 0, on: false, t: Date.now(), el: null, pane: false};
+    addEventListener('touchmove', onMove, {passive: false});
+  }
 }, {passive: true});
-addEventListener('touchmove', e => {
+function onMove(e) {
   if (!drag) return;
   const t = e.touches[0], dx = t.clientX - drag.x, dy = t.clientY - drag.y;
   if (!drag.on) {
-    if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { drag = null; return; } // it is a scroll
+    if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { drag = null; stopMove(); return; } // it is a scroll
     if (dx < 12) return;
     drag.on = true; drag.pane = narrowOpen();
     drag.el = drag.pane ? $('#pane') : $('#page');
     if (drag.pane) document.body.classList.add('peek');
     drag.el.style.transition = 'none';
-    drag.el.style.boxShadow = '-14px 0 30px rgba(0,0,0,.18)';
+    drag.el.style.willChange = 'transform';
   }
   drag.dx = Math.max(0, dx);
   drag.el.style.transform = 'translateX(' + drag.dx + 'px)';
   if (e.cancelable) e.preventDefault();
-}, {passive: false});
+}
 addEventListener('touchend', () => {
+  stopMove();
   if (!drag) return;
   if (!drag.on) { drag = null; return; }
   const v = drag.dx / Math.max(1, Date.now() - drag.t); // px per ms
   settle(drag.dx > innerWidth * 0.35 || (drag.dx > 50 && v > 0.5));
 });
-addEventListener('touchcancel', () => { if (drag && drag.on) settle(false); else drag = null; });
+addEventListener('touchcancel', () => { stopMove(); if (drag && drag.on) settle(false); else drag = null; });
 
 /* The Android app calls this when the back gesture / back button is used. true = handled here.
    An open chat on a narrow screen slides closed; anywhere else this page slides back to the files page. */
@@ -315,7 +340,7 @@ window.stashBack = function () {
   return true;
 };
 
-async function load(older) {
+async function load(older, hold) {
   if (!cur) return;
   if (older) { if (loadingMore) return; loadingMore = true; }
   /* The newest open/search always wins: an older answer that arrives late is dropped. "Load earlier" does not take a new
@@ -324,6 +349,7 @@ async function load(older) {
   if (!older) box.replaceChildren(spin());
   try {
     const d = await api('/api/chats/' + id + '/messages?limit=100' + (older && firstId ? '&before=' + firstId : '') + (q ? '&q=' + encodeURIComponent(q) : ''));
+    if (hold) await hold; // a chat that is still sliding in is filled in after the slide
     if (!cur || cur.id !== id || my !== seq) return;
     const oldHeight = box.scrollHeight;
     box.querySelector('.loading')?.remove();
