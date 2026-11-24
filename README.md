@@ -3,10 +3,10 @@
 A tiny self-hosted data vault. Upload any file from a browser or phone, see it in a clean
 web UI, and download it back whenever you want.
 
-- **Backend:** one Python file (`server.py`), standard library only. No `pip install`, no Node.
-- **Frontend:** one HTML file (`index.html`), no build step, no CDN. Works on a LAN with no internet.
-- **Storage:** files on disk (`data/blobs/`), metadata in SQLite (`data/stash.db`).
-- **Android app:** `android/`: the website in a WebView plus automatic photo/video backup.
+- **Backend:** two Python files (`server.py` and `chats.py`), standard library only. No `pip install`, no Node.
+- **Frontend:** two HTML files (`index.html` and `chats.html`), no build step, no CDN. Works on a LAN with no internet.
+- **Storage:** files on disk (`data/blobs/`), metadata in SQLite (`data/stash.db`), and WhatsApp chat database snapshots (`data/chats/`).
+- **Android app:** `android/`: the website in a WebView, automatic photo/video backup, and automatic WhatsApp chat backup.
 
 Built for a small machine (2 GB RAM, 4 × 1.5 GHz cores, 8 GB eMMC): files are streamed, never loaded whole into memory.
 Status: **alpha**. Settled decisions are in [`GUIDELINES.md`](GUIDELINES.md); the rules for everyone working on the project are in [`RULES.md`](RULES.md).
@@ -34,7 +34,7 @@ STASH_PASSWORD='pick-a-password' python3 server.py
 
 Then open the address it prints (for example `http://192.168.1.50:8080`) from any device on your network.
 
-Needs Python 3.8 or newer. Nothing else to install.
+Needs Python 3.8 or newer. Nothing else to install. Keep `chats.py`, `index.html`, and `chats.html` next to `server.py`.
 
 ## Settings (environment variables)
 
@@ -43,9 +43,11 @@ Needs Python 3.8 or newer. Nothing else to install.
 | `STASH_PASSWORD` | *(none)* | Shared password for the whole vault. |
 | `STASH_HOST` | `0.0.0.0` with a password, otherwise `127.0.0.1` | Address to listen on. |
 | `STASH_PORT` | `8080` | Port. |
-| `STASH_DATA` | `./data` | Where files and the database are kept. |
-| `STASH_MAX_MB` | `10` | Largest single upload, in MB. Phone files above it are not uploaded; the backup screen counts them as "too big" and tries them again after you raise the limit. |
+| `STASH_DATA` | `./data` | Where files, chat snapshots, and the database are kept. |
+| `STASH_MAX_MB` | `10` | Largest single file upload, in MB. Phone files above it are not uploaded; the backup screen counts them as "too big" and tries them again after you raise the limit. |
 | `STASH_API_KEY` | *(generated)* | Key for the Android app / scripts (`Authorization: Bearer <key>`), at least 16 characters. If unset and a password is set, one is generated into `<data>/api.key` on first start. Delete that file and restart to rotate it. |
+| `STASH_CHATS_MAX_MB` | `512` | Largest plain WhatsApp `msgstore.db` chat upload, in MB (separate from `STASH_MAX_MB`). |
+| `STASH_CHATS_KEEP` | `3` | How many chat database snapshots to keep in `<data>/chats/` (`0` = keep all). Older snapshots are kept because WhatsApp drops deleted messages. |
 
 **Safety default:** with no password set, the server only listens on `127.0.0.1`, so it can't be reached from other machines by accident. Set a password before exposing it to a network.
 
@@ -56,24 +58,26 @@ Needs Python 3.8 or newer. Nothing else to install.
 - Preview in the browser: images (thumbnails for files under 8 MB, not HEIC/TIFF), video and audio (seekable), PDF, text, code, JSON, and CSV/TSV as a table. Text previews show the first 256 KB; tables show the first 300 rows. Arrow keys move between files in the viewer
 - Download one file, or select several and download an uncompressed `.zip`
 - Rename, delete, SHA-256 checksum for each file (click to copy), storage and free-disk stats
-- Light and dark theme
+- Light and dark theme (shared between the file vault and the chat viewer)
 - Android app with automatic backup of the phone's photos and videos (one-way, de-duplicated by SHA-256)
+- WhatsApp chat backup & viewer (`/chats`, alpha v1): the Android app decrypts WhatsApp's `msgstore*.crypt15` on the phone with your 64-digit key and uploads the plain database to the server; browse chats, search chats and messages, and load older messages in `chats.html`
 
 ## Android app
 
 The project in `android/` is a native Android app (Kotlin, no UI libraries) that:
 
 - asks for your server address on first launch (saved; changeable later),
-- shows the Stash website in a WebView, with working uploads and downloads (single files and zips go to `Downloads/Stash`),
-- backs up photos and videos in the background, once an hour, Wi-Fi only by default.
+- shows the Stash website in a WebView, with working uploads and downloads (single files and zips go to `Downloads/Stash`), stepwise Back navigation, and a pre-flight server check with reconnect support,
+- backs up photos and videos in the background, once an hour, Wi-Fi only by default,
+- backs up WhatsApp chats in the background every 6 hours (alpha v1): reads the chosen WhatsApp folder via Android's folder picker, decrypts `msgstore*.crypt15` on the phone in 64 KB chunks, and uploads only when the decrypted database changed.
 
-Its own screens (server address, phone backup) are styled like the website and follow the phone's light or dark setting.
+Its own screens (server address, phone backup) are styled like the website and follow the phone's light or dark setting (the WhatsApp chats card on the backup screen is still in a plain v1 layout).
 
 Build it with Android Studio (open the `android/` folder), `./gradlew assembleDebug`, or let GitHub Actions do it: every push to `main`/`master` (or "Run workflow" by hand) builds a debug APK, downloadable as the `stash-debug-apk` artifact. Details, permissions and limitations are in [`android/README.md`](android/README.md).
 
 Backup talks to the server through the API key. You don't have to type it: log in to the website inside the app once, then switch backup on, and the app fetches the key itself (`GET /api/app-key`, which only works for a logged-in session). The key stays on the phone in the app's private storage.
 
-> **Update the server too.** The backup needs the new routes in this `server.py` (`api` version 2). The app checks this and tells you if the server is too old.
+> **Update the server too.** Both photo/video backup and WhatsApp chat backup need the routes in this `server.py` + `chats.py` (`api` version 2 with chat endpoints). The app checks this and tells you if the server is too old.
 
 ## Keep it running (Linux with systemd, e.g. Armbian)
 
@@ -105,9 +109,10 @@ The `stash` user needs write access to `STASH_DATA`.
 ## Notes
 
 - Uploads are streamed to disk in 256 KB chunks, so large files don't use much memory. Unfinished uploads sit in `data/tmp/` and are deleted on the next start.
-- **Disk space:** the server refuses an upload that would leave under 64 MB free. A `.zip` download first builds a full temporary copy in `data/tmp/`, so it needs room for a second copy of the selected files.
-- This speaks plain HTTP. To use it over the internet, put it behind a reverse proxy that adds HTTPS (Caddy or nginx); it honours `X-Forwarded-Proto` for secure cookies. Reverse proxies need their upload size limit raised to match `STASH_MAX_MB`.
-- Back up the whole `data/` folder to back up everything. It includes `secret.key` and `api.key`; they are in `.gitignore` and must stay out of git.
+- **Disk space:** the server refuses a file upload that would leave under 64 MB free. A chat import requires the database size plus 25% plus 64 MB free (for indexing). A `.zip` download first builds a full temporary copy in `data/tmp/`, so it needs room for a second copy of the selected files.
+- **WhatsApp chats privacy & snapshots:** the 64-digit WhatsApp backup key never leaves the phone; the server only receives the plain `msgstore.db` and keeps it in `data/chats/` (separate from `/api/files`). Only the newest snapshot is shown; older ones stay on disk up to `STASH_CHATS_KEEP`. Contact names live in WhatsApp's `wa.db` (not backed up), so chats display group subjects or `+<number>`.
+- This speaks plain HTTP. To use it over the internet, put it behind a reverse proxy that adds HTTPS (Caddy or nginx); it honours `X-Forwarded-Proto` for secure cookies. Reverse proxies need their upload size limit raised to match `STASH_MAX_MB` (and `STASH_CHATS_MAX_MB` if using chat backup).
+- Back up the whole `data/` folder to back up everything (`blobs/`, `stash.db`, `chats/`, `secret.key`, `api.key`). `secret.key` and `api.key` are in `.gitignore` and must stay out of git.
 - Uploaded files are never executed or rendered as web pages: HTML and scripts are shown as plain text, SVG runs sandboxed.
 - Login is a single shared password with a rate limit (10 wrong tries per 5 minutes per address). It is not per-user accounts. The rate limit is shared by wrong passwords and wrong API keys, per client address. `GET /api/session` is only a status check: a wrong key there is never delayed and never answered with 429 (it just reports `"authed": false`), but it is still counted toward the 10, so it can't be used to guess keys. Once an address is blocked, `authed` stays false there even for the right key until the 5 minutes end.
 - Sessions are stateless cookies lasting 30 days. "Log out" removes the cookie from that browser only; to cut off every logged-in device, change `STASH_PASSWORD` and restart.
