@@ -145,11 +145,11 @@ class BackupActivity : ComponentActivity() {
         )
 
         setContentView(
-            Ui.page(
+            SwipeBackLayout(this, Ui.page(
                 this,
                 Ui.header(this, "Phone backup", "Photos, videos and WhatsApp chats to your Stash"),
                 serverCard, scheduleCard, contentCard, statusCard, note, chatCard,
-            )
+            ))
         )
     }
 

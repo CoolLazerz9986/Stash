@@ -1,6 +1,23 @@
+<!-- Path: android/app/src/main/res/values/themes.xml -->
 <resources>
     <style name="Theme.Stash" parent="@android:style/Theme.DeviceDefault.DayNight">
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
+    </style>
+
+    <!-- Screens that slide in from the right and can be swiped away from the left edge (the settings screen).
+         The window is see-through so the screen underneath shows while the finger drags; the screen's own view
+         paints the background (SwipeBackLayout). -->
+    <style name="Theme.Stash.Slide" parent="Theme.Stash">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@style/Anim.Stash.Slide</item>
+    </style>
+
+    <style name="Anim.Stash.Slide" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/stash_in_right</item>
+        <item name="android:activityOpenExitAnimation">@anim/stash_out_left</item>
+        <item name="android:activityCloseEnterAnimation">@anim/stash_in_left</item>
+        <item name="android:activityCloseExitAnimation">@anim/stash_out_right</item>
     </style>
 </resources>
