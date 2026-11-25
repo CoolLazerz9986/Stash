@@ -430,6 +430,7 @@ setTimeout(hideSplash, 8000); // safety net
 let leaving = false;
 function resetLeave(){ leaving = false; document.documentElement.classList.remove('leave-fwd'); try { sessionStorage.removeItem('stash-nav'); } catch {} }
 function goChats(){
+  if (window.StashApp && StashApp.openChats) { StashApp.openChats(); return; }  // Android app: the app slides the Chats page in natively
   if (leaving) return;
   leaving = true;
   try { sessionStorage.setItem('stash-nav','fwd'); } catch {}

@@ -10,6 +10,7 @@
 (function () {
   var d = document.documentElement;
   try { d.dataset.theme = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); } catch (e) {}
+  if (window.StashApp && window.StashApp.closeChats) d.classList.add('nosplash'); // Android app: the app slides this page in itself
   try {
     var n = sessionStorage.getItem('stash-nav'); sessionStorage.removeItem('stash-nav');
     if (n === 'fwd' || n === 'back') { d.classList.add('nosplash', 'enter-' + n); setTimeout(function () { d.classList.remove('enter-' + n); }, 700); }
@@ -157,7 +158,8 @@ const $ = s => document.querySelector(s);
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
 /* Heavy work (building the chat list or 100 messages) waits until a slide has finished; run in the middle of the animation
    it makes the slide stutter. Returns a promise to wait on, or null when there is nothing to wait for. */
-const SLID = document.documentElement.classList.contains('enter-back') || document.documentElement.classList.contains('enter-fwd');
+const APP = !!(window.StashApp && StashApp.closeChats); // inside the Android app: it does the page slide and the leave-swipe natively
+const SLID = APP || document.documentElement.classList.contains('enter-back') || document.documentElement.classList.contains('enter-fwd');
 const afterMs = ms => REDUCE ? null : new Promise(r => setTimeout(r, ms));
 const afterSlide = () => SLID ? afterMs(280) : null;
 const narrow = () => matchMedia('(max-width:760px)').matches;
@@ -258,6 +260,7 @@ function resetLeave() {
   try { sessionStorage.removeItem('stash-nav'); } catch {}
 }
 function goHome(already) { // already = the swipe has moved the page off screen
+  if (APP) { StashApp.closeChats(); return; }
   if (leaving) return;
   leaving = true;
   try { sessionStorage.setItem('stash-nav', 'back'); } catch {}
@@ -301,6 +304,7 @@ function stopMove() { removeEventListener('touchmove', onMove); }
 addEventListener('touchstart', e => {
   drag = null; stopMove();
   if (leaving || e.touches.length !== 1) return;
+  if (APP && !narrowOpen()) return; // the app's own edge swipe leaves this page; only the open-chat pane is dragged here
   const t = e.touches[0];
   if (t.clientX <= EDGE) {
     drag = {x: t.clientX, y: t.clientY, dx: 0, on: false, t: Date.now(), el: null, pane: false};
@@ -334,6 +338,8 @@ addEventListener('touchcancel', () => { stopMove(); if (drag && drag.on) settle(
 
 /* The Android app calls this when the back gesture / back button is used. true = handled here.
    An open chat on a narrow screen slides closed; anywhere else this page slides back to the files page. */
+/* tell the Android app whether a chat is open over the list, so its edge swipe leaves the page only when none is */
+if (APP) new MutationObserver(() => StashApp.setPane(narrowOpen())).observe(document.body, {attributes: true, attributeFilter: ['class']});
 window.stashBack = function () {
   if (narrowOpen()) { slideCloseChat(); return true; }
   goHome();
