@@ -39,10 +39,10 @@ import kotlin.math.abs
 /**
  * Hosts the Stash website (served by your own server) in a WebView and adds what a browser tab can't do.
  *
- * Pages: the files page lives in [web] and stays alive for the whole session. The Chats page is a second WebView
- * ([chatsView]) stacked on top of it. Sliding between them is done here, natively (View.translationX on the render
- * thread, like any Android app), instead of with CSS inside one WebView that is also loading and rendering a page.
- * The same goes for the swipe from the left edge that leaves Chats.
+ * Pages: the files page lives in [web] and stays alive for the whole session. Every further page (Chats, then one open
+ * chat) is another WebView in [layers], stacked on top. Sliding between them is done here, natively (View.translationX
+ * on the render thread, like any Android app), instead of with CSS inside one WebView that is also loading and
+ * rendering a page. The same goes for the swipe from the left edge that leaves the top page.
  */
 class MainActivity : ComponentActivity() {
     private lateinit var prefs: Prefs
@@ -50,8 +50,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var stack: Stack
     private lateinit var errorBox: LinearLayout
     private lateinit var errorText: TextView
-    private var chatsView: WebView? = null
-    @Volatile private var paneOpen = false // a chat is open over the chat list (set by the chats page): its own swipe closes it
+    private val layers = ArrayList<WebView>() // pages on top of the files page, last = the one showing
     private var moving = false // a page slide is running
     private var base = ""
     private var hasError = false
@@ -77,21 +76,21 @@ class MainActivity : ComponentActivity() {
             override fun handleOnBackPressed() {
                 if (moving) return // a slide is running; the next press counts
                 // Back, one step at a time: 1) close the website's open dialog (file viewer / confirm box),
-                // 2) let the page handle it if it can (the chats page closes an open chat, or leaves to the files page),
+                // 2) let the page handle it if it can (an open chat or the chats page slides out),
                 // 3) on the files page, leave the app.
-                val top = chatsView ?: web
+                val top = layers.lastOrNull() ?: web
                 top.evaluateJavascript(
                     "(function(){var d=document.querySelector('dialog[open]');if(d){d.close();return 1}" +
                         "if(window.stashBack&&window.stashBack())return 1;return 0})()"
                 ) { result ->
                     if (result != "1") {
-                        if (chatsView != null) closeChats() else moveTaskToBack(true)
+                        if (layers.isNotEmpty()) closePage() else moveTaskToBack(true)
                     }
                 }
             }
         })
         load("/", true)
-        if (intent.getStringExtra(EXTRA_PATH) == "/chats") openChats(false)
+        if (intent.getStringExtra(EXTRA_PATH) == "/chats") openPage("/chats", false)
     }
 
     /** Started again with a page to show (the "Open chats" button on the backup screen). */
@@ -99,11 +98,11 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         val path = intent.getStringExtra(EXTRA_PATH)
-        if (path == "/chats" && ::web.isInitialized) openChats(false)
+        if (path == "/chats" && ::web.isInitialized) openPage("/chats", false)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun newWebView(isChats: Boolean): WebView {
+    private fun newWebView(isChats: Boolean): WebView { // isChats = a page on top of the files page
         val w = WebView(this)
         w.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         w.setBackgroundColor(Ui.themeBackground(this)) // no white flash while a page loads or slides in
@@ -120,8 +119,8 @@ class MainActivity : ComponentActivity() {
                 if (s == base || s.startsWith("$base/") || s.startsWith("$base?")) {
                     // pages of this app slide natively instead of loading inside the page that links to them
                     val path = request.url.path ?: "/"
-                    if (!isChats && path == "/chats") { openChats(); return true }
-                    if (isChats && (path == "/" || path == "/index.html")) { closeChats(); return true }
+                    if (!isChats && path == "/chats") { openPage(s.removePrefix(base)); return true }
+                    if (isChats && (path == "/" || path == "/index.html")) { closePage(); return true }
                     return false
                 }
                 try {
@@ -218,17 +217,24 @@ class MainActivity : ComponentActivity() {
     /** The files page moves a little the other way while a page slides over it (same 24% as the website's own slide). */
     private val parallax = 0.24f
 
-    /** Chats slides in from the right over the files page. [animate] = false just puts it there (app start, "Open chats"). */
-    private fun openChats(animate: Boolean = true) {
-        if (chatsView != null || moving || !::web.isInitialized) return
-        paneOpen = false
+    /** The page under the top one (the files page when only one page is on top). */
+    private fun below(): View = if (layers.size >= 2) layers[layers.size - 2] else web
+
+    /**
+     * A page slides in from the right over the current one: [path] is "/chats" or "/chats?c=ID&n=NAME" (one chat).
+     * [animate] = false just puts it there (app start, "Open chats").
+     */
+    private fun openPage(path: String, animate: Boolean = true) {
+        if (moving || !::web.isInitialized) return
+        if (path == "/chats" && layers.isNotEmpty()) return // already open
+        val under = layers.lastOrNull() ?: web
         val c = newWebView(true)
-        chatsView = c
-        stack.addView(c, stack.indexOfChild(errorBox)) // above the files page, below the error screen
-        c.loadUrl("$base/chats")
+        layers.add(c)
+        stack.addView(c, stack.indexOfChild(errorBox)) // above the other pages, below the error screen
+        c.loadUrl(base + path)
         val w = stack.width.toFloat()
         if (!animate || w <= 0f) {
-            web.translationX = -w * parallax
+            under.translationX = -w * parallax
             return
         }
         moving = true
@@ -236,55 +242,59 @@ class MainActivity : ComponentActivity() {
         c.post { // after the new view has been laid out, so the first frame of the slide is not spent on building it
             val ms = 280L
             val ease = DecelerateInterpolator(1.6f)
-            web.animate().translationX(-w * parallax).setDuration(ms).setInterpolator(ease).withLayer().start()
+            under.animate().translationX(-w * parallax).setDuration(ms).setInterpolator(ease).withLayer().start()
             c.animate().translationX(0f).setDuration(ms).setInterpolator(ease).withLayer()
                 .withEndAction { moving = false }.start()
         }
     }
 
-    /** Chats slides out to the right and is thrown away (it is built fresh, with fresh data, next time it opens). */
-    private fun closeChats() {
-        val c = chatsView ?: return
+    /** The top page slides out to the right and is thrown away (opened again, it is built fresh with fresh data). */
+    private fun closePage() {
+        val c = layers.lastOrNull() ?: return
         if (moving) return
-        slideChats(c, false, 260L)
+        slideTop(c, false, 260L)
     }
 
     /** Animate from wherever the drag left it: [open] = back to fully open, otherwise out to the right and gone. */
-    private fun slideChats(c: WebView, open: Boolean, baseMs: Long) {
+    private fun slideTop(c: WebView, open: Boolean, baseMs: Long) {
         val w = stack.width.toFloat().coerceAtLeast(1f)
+        val under = below()
         val remaining = (if (open) c.translationX else w - c.translationX) / w // 0..1 of the screen still to travel
         val ms = (baseMs * remaining.coerceIn(0.35f, 1f)).toLong()
         val ease = DecelerateInterpolator(1.4f)
         moving = true
-        web.animate().translationX(if (open) -w * parallax else 0f).setDuration(ms).setInterpolator(ease).withLayer().start()
+        under.animate().translationX(if (open) -w * parallax else 0f).setDuration(ms).setInterpolator(ease).withLayer().start()
         c.animate().translationX(if (open) 0f else w).setDuration(ms).setInterpolator(ease).withLayer()
             .withEndAction {
                 moving = false
-                if (!open) removeChats()
+                if (!open) removePage(c)
             }.start()
     }
 
-    private fun removeChats() {
-        val c = chatsView ?: return
-        chatsView = null
-        paneOpen = false
-        web.translationX = 0f
+    private fun removePage(c: WebView) {
+        layers.remove(c)
         stack.removeView(c)
         c.stopLoading()
         c.destroy()
+        if (layers.isEmpty()) web.translationX = 0f
     }
 
-    /** Both pages follow the finger: Chats by [dx], the files page by a fraction of it (parallax). */
+    private fun removeAllPages() {
+        while (layers.isNotEmpty()) removePage(layers.last())
+        web.translationX = 0f
+    }
+
+    /** Both pages follow the finger: the top one by [dx], the one under it by a fraction of it (parallax). */
     private fun drag(c: WebView, dx: Float) {
         val w = stack.width.toFloat().coerceAtLeast(1f)
         val x = dx.coerceIn(0f, w)
         c.translationX = x
-        web.translationX = -w * parallax * (1f - x / w)
+        below().translationX = -w * parallax * (1f - x / w)
     }
 
     /**
      * The layout that holds the pages. It takes over a swipe that starts at the left edge and goes to the right while
-     * Chats is showing (and no chat is open inside it), so the finger drags the page natively.
+     * a page is on top of the files page, so the finger drags that page natively.
      */
     private inner class Stack(ctx: Context) : FrameLayout(ctx) {
         private val slop = ViewConfiguration.get(ctx).scaledTouchSlop
@@ -306,7 +316,7 @@ class MainActivity : ComponentActivity() {
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     end()
-                    tracking = chatsView != null && !moving && !paneOpen && e.x <= edge
+                    tracking = layers.isNotEmpty() && !moving && e.x <= edge
                     if (tracking) {
                         downX = e.x
                         downY = e.y
@@ -330,7 +340,7 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onTouchEvent(e: MotionEvent): Boolean {
-            val c = chatsView
+            val c = layers.lastOrNull()
             if (!dragging || c == null) return false
             vt?.addMovement(e)
             when (e.actionMasked) {
@@ -343,7 +353,7 @@ class MainActivity : ComponentActivity() {
                         (dx > width * 0.35f || (dx > context.dp(24) && vx > context.dp(400)))
                     end()
                     moving = false
-                    slideChats(c, !leave, 220L)
+                    slideTop(c, !leave, 220L)
                 }
             }
             return true
@@ -381,8 +391,8 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Loads the files page ([path] "/"). The Chats page is not loaded here: it is opened by [openChats]. A reload
-     * ("Try again", a changed address) closes Chats first; the first load at app start ([keepChats]) leaves one that was just opened.
+     * Loads the files page ([path] "/"). Other pages are not loaded here: they are opened by [openPage]. A reload
+     * ("Try again", a changed address) closes them first; the first load at app start ([keepChats]) leaves one that was just opened.
      * The server is checked first with the app's own 8-second connect timeout (StashApi.session): if it does not
      * answer, the error screen shows at once instead of after the WebView's own (very long) give-up time.
      */
@@ -403,7 +413,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 if (isFinishing || isDestroyed || token != loadToken) return@runOnUiThread // a newer load took over
                 if (problem == null) {
-                    if (!keepChats) { removeChats(); moving = false } // a fresh load starts from the files page
+                    if (!keepChats) { removeAllPages(); moving = false } // a fresh load starts from the files page
                     web.loadUrl(target)
                 } else {
                     hasError = true
@@ -434,7 +444,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        chatsView?.destroy()
+        layers.forEach { it.destroy() }
         if (::web.isInitialized) web.destroy()
         super.onDestroy()
     }
@@ -456,22 +466,17 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { startActivity(Intent(this@MainActivity, BackupActivity::class.java)) }
         }
 
-        /** The files page asks for Chats: slide it in. */
+        /** A page asks for another page ("/chats", or "/chats?c=ID&n=NAME&g=1" for one chat): slide it in. */
         @JavascriptInterface
-        fun openChats() {
-            runOnUiThread { this@MainActivity.openChats() }
+        fun openPage(path: String) {
+            if (!Regex("^/chats(\\?[A-Za-z0-9%=&_.~-]{0,400})?$").matches(path)) return
+            runOnUiThread { this@MainActivity.openPage(path) }
         }
 
-        /** The chats page asks to leave: slide it out. */
+        /** The top page asks to leave: slide it out. */
         @JavascriptInterface
-        fun closeChats() {
-            runOnUiThread { this@MainActivity.closeChats() }
-        }
-
-        /** The chats page says whether a chat is open over the chat list (then the edge swipe closes that chat, not the page). */
-        @JavascriptInterface
-        fun setPane(open: Boolean) {
-            paneOpen = open
+        fun closePage() {
+            runOnUiThread { this@MainActivity.closePage() }
         }
     }
 

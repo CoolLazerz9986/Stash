@@ -10,7 +10,10 @@
 (function () {
   var d = document.documentElement;
   try { d.dataset.theme = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); } catch (e) {}
-  if (window.StashApp && window.StashApp.closeChats) d.classList.add('nosplash'); // Android app: the app slides this page in itself
+  if (window.StashApp && window.StashApp.closePage) { // Android app: the app slides this page in itself
+    d.classList.add('nosplash');
+    if (/[?&]c=/.test(location.search)) d.classList.add('solo'); // one chat only, opened over the list by the app
+  }
   try {
     var n = sessionStorage.getItem('stash-nav'); sessionStorage.removeItem('stash-nav');
     if (n === 'fwd' || n === 'back') { d.classList.add('nosplash', 'enter-' + n); setTimeout(function () { d.classList.remove('enter-' + n); }, 700); }
@@ -119,6 +122,10 @@ body.has-chat #qrow{display:block}
   body.peek #list{display:flex}
   body.peek #pane{position:absolute;inset:0;z-index:2;background:var(--bg);box-shadow:-10px 0 24px rgba(0,0,0,.16)}
 }
+/* the app opened this page for one chat only (no list): show just the chat, at any width */
+.solo #list{display:none!important}
+.solo #pane{display:flex!important;animation:none!important}
+.solo #back{display:inline-flex}
 @media (prefers-reduced-motion:reduce){
   .btn:active,.chat:active{transform:none}
   .sp-logo{animation:none}
@@ -158,7 +165,8 @@ const $ = s => document.querySelector(s);
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
 /* Heavy work (building the chat list or 100 messages) waits until a slide has finished; run in the middle of the animation
    it makes the slide stutter. Returns a promise to wait on, or null when there is nothing to wait for. */
-const APP = !!(window.StashApp && StashApp.closeChats); // inside the Android app: it does the page slide and the leave-swipe natively
+const APP = !!(window.StashApp && StashApp.closePage); // inside the Android app: it does the page slides and the leave-swipe natively
+const SOLO = document.documentElement.classList.contains('solo');
 const SLID = APP || document.documentElement.classList.contains('enter-back') || document.documentElement.classList.contains('enter-fwd');
 const afterMs = ms => REDUCE ? null : new Promise(r => setTimeout(r, ms));
 const afterSlide = () => SLID ? afterMs(280) : null;
@@ -210,6 +218,12 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 function spin() { const d = el('div', 'loading'); d.append(document.createElement('i')); return d; }
 
 async function boot() {
+  if (SOLO) { // opened by the app for one chat: no list to fetch
+    const q = new URLSearchParams(location.search);
+    try { await openChat({id: q.get('c'), name: q.get('n') || '', group: q.get('g') === '1'}); }
+    finally { hideSplash(); }
+    return;
+  }
   try {
     const wait = afterSlide();
     const d = await api('/api/chats');
@@ -236,11 +250,13 @@ function drawList() {
 }
 
 async function openChat(c) {
+  /* in the app a chat on a narrow screen is its own page that the app slides in (and out again with the edge swipe) */
+  if (APP && !SOLO && narrow()) { StashApp.openPage('/chats?c=' + encodeURIComponent(c.id) + '&n=' + encodeURIComponent(c.name) + (c.group ? '&g=1' : '')); return; }
   cur = c; firstId = 0; $('#q').value = ''; $('#title').textContent = c.name;
   const b = document.body;
   b.classList.add('has-chat');
   /* narrow screens: the chat slides in from the right over the list (the list stays visible during the slide) */
-  if (narrow() && !b.classList.contains('open') && !REDUCE) { b.classList.add('peek'); setTimeout(() => { if (!drag) b.classList.remove('peek'); }, 300); }
+  if (!SOLO && narrow() && !b.classList.contains('open') && !REDUCE) { b.classList.add('peek'); setTimeout(() => { if (!drag) b.classList.remove('peek'); }, 300); }
   b.classList.add('open');
   /* mark the open chat without rebuilding the whole list (hundreds of buttons) in the middle of the slide */
   for (const e of $('#rows').children) e.classList.toggle('on', e.dataset.id === String(c.id));
@@ -260,7 +276,7 @@ function resetLeave() {
   try { sessionStorage.removeItem('stash-nav'); } catch {}
 }
 function goHome(already) { // already = the swipe has moved the page off screen
-  if (APP) { StashApp.closeChats(); return; }
+  if (APP) { StashApp.closePage(); return; }
   if (leaving) return;
   leaving = true;
   try { sessionStorage.setItem('stash-nav', 'back'); } catch {}
@@ -304,7 +320,7 @@ function stopMove() { removeEventListener('touchmove', onMove); }
 addEventListener('touchstart', e => {
   drag = null; stopMove();
   if (leaving || e.touches.length !== 1) return;
-  if (APP && !narrowOpen()) return; // the app's own edge swipe leaves this page; only the open-chat pane is dragged here
+  if (APP) return; // the app's own edge swipe leaves this page
   const t = e.touches[0];
   if (t.clientX <= EDGE) {
     drag = {x: t.clientX, y: t.clientY, dx: 0, on: false, t: Date.now(), el: null, pane: false};
@@ -338,9 +354,8 @@ addEventListener('touchcancel', () => { stopMove(); if (drag && drag.on) settle(
 
 /* The Android app calls this when the back gesture / back button is used. true = handled here.
    An open chat on a narrow screen slides closed; anywhere else this page slides back to the files page. */
-/* tell the Android app whether a chat is open over the list, so its edge swipe leaves the page only when none is */
-if (APP) new MutationObserver(() => StashApp.setPane(narrowOpen())).observe(document.body, {attributes: true, attributeFilter: ['class']});
 window.stashBack = function () {
+  if (SOLO) { StashApp.closePage(); return true; }
   if (narrowOpen()) { slideCloseChat(); return true; }
   goHome();
   return true;
@@ -383,7 +398,7 @@ async function load(older, hold) {
 }
 
 $('#filter').oninput = drawList;
-$('#back').onclick = () => { if (narrowOpen()) slideCloseChat(); else closeChat(); };
+$('#back').onclick = () => { if (SOLO) StashApp.closePage(); else if (narrowOpen()) slideCloseChat(); else closeChat(); };
 let qt; $('#q').oninput = () => { clearTimeout(qt); qt = setTimeout(async () => { firstId = 0; await load(false); const m = $('#msgs'); m.scrollTop = m.scrollHeight; }, 350); };
 boot();
 </script>
