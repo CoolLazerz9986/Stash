@@ -33,7 +33,7 @@ Sessions are stateless: `POST /api/logout` only clears the cookie. Changing `STA
 | POST | `/api/login` | no | body `{"password": "..."}` → sets cookie. `401` wrong password, `429` too many tries |
 | POST | `/api/logout` | no | clears the cookie |
 | GET | `/api/app-key` | yes | `{"key": "<api key>"}` (empty string when the server has no password and no `STASH_API_KEY`) |
-| GET | `/api/files` | yes | `{"files":[file…],"stats":{"count","bytes","total","free"}}`, newest first. `bytes` = total size of stored files; `total`/`free` = disk of the data folder |
+| GET | `/api/files` | yes | `{"files":[file…],"stats":{"count","bytes","total","free"}}`, newest first. `bytes` = total size of stored files; `total`/`free` = disk of the data folder. Optional `?source=whatsapp` lists only files with that tag, `?source=` (empty) only untagged files; `stats` always cover every file |
 | GET | `/api/files/by-hash/<sha256>` | yes | 64 hex chars, case-insensitive (anything else is `404`). `{"exists":bool,"file":file\|null}`. Only `true` if the blob really is on disk. |
 | GET | `/api/files/<id>/download` | yes | attachment. Supports `Range`, `ETag` |
 | GET | `/api/files/<id>/raw` | yes | inline preview. Text-like types are always `text/plain`; SVG is sandboxed; types with no safe inline form are sent as attachments. `?as=text` forces `text/plain` (used for the text/CSV previews) |
@@ -46,7 +46,7 @@ Sessions are stateless: `POST /api/logout` only clears the cookie. Changing `STA
 | GET | `/api/chats/<chat id>/messages` | yes | `?limit=` (1–200, default 100) `&before=<message id>` `&q=<text>`. `{"messages":[message…],"more":bool}`. Messages are the newest `limit` ones (or the newest before `before`), returned oldest first. `q` keeps messages whose text contains it (case-insensitive, max 100 chars). `400` if `before`/`limit` are not numbers, `404` unknown chat or no snapshot |
 | POST | `/api/chats/import` | yes | see "WhatsApp chats". `201` + the snapshot object |
 
-`file` = `{id, name, mime, size, sha256, created, modified}` (`created`/`modified` are Unix seconds, `id` is 32 hex chars).
+`file` = `{id, name, mime, size, sha256, created, modified, source}` (`created`/`modified` are Unix seconds, `id` is 32 hex chars, `source` is the upload tag, `""` if none).
 
 `download` and `raw` also answer `HEAD`, `Range` (`206`, or `416` if out of range) and `If-None-Match` (`304`). The `ETag` is the first 24 hex chars of the file's SHA-256.
 When a password is set, any other path under `/api/` answers `401` before it answers `404`. Anything not under `/api/` and not listed above is `404`.
@@ -60,6 +60,7 @@ When a password is set, any other path under `/api/` answers `401` before it ans
 | `Content-Length` | yes | exact size (no chunked encoding). `411` if missing, `400` if negative, `413` if over `maxBytes`, `507` if the disk would be left with under 64 MB free |
 | `X-Filename` | recommended | percent-encoded UTF-8 name (spaces as `%20`, not `+`). Path parts are stripped; names over 200 chars are shortened; empty becomes `unnamed`. A clash becomes `name (1).ext` |
 | `Content-Type` | no | used if the extension doesn't give a type |
+| `X-Source` | no | a label for where the file came from, 1–20 chars of `a-z 0-9 _ -` (lower-cased), e.g. `whatsapp` for chat media. Only a label: it changes neither where the file is stored nor how it is matched by hash. `400` if malformed |
 | `X-Sha256` | no | 64 hex chars. The server hashes what it received and answers `422` (storing nothing) if it differs. `400` if malformed |
 
 The server may answer `413`/`507` and close the connection **before** the body is sent, so a client can see a broken pipe instead of the status. Check `maxBytes` first and treat a dropped upload connection as "ask the server if it is still reachable".
@@ -87,7 +88,17 @@ Objects:
 
 - `snapshot` = `{name, ts, size, sha256, chats, messages}`. `sha256` is the hash of the **bytes the phone uploaded** (not of the stored file, which has the extra index), so a client can compare its own hash with it to skip an upload.
 - `chat` = `{id, name, jid, group, count, last}`, `last` = `{ts, me, text}` or `null`. Status broadcasts and empty chats are left out.
-- `message` = `{id, me, ts, text, label?, sender?}`. `label` is set for non-text messages (`Photo`, `Voice message`, `Video`, …) and `text` may then be empty. `sender` (digits of the phone number) is set for messages from others, mainly useful in groups.
+- `message` = `{id, me, ts, text, label?, sender?, media?}`. `label` is set for non-text messages (`Photo`, `Voice message`, `Video`, …) and `text` may then be empty. `sender` (digits of the phone number) is set for messages from others, mainly useful in groups.
+
+### WhatsApp chat media
+
+The phone also uploads the media files that belong to chat messages (`POST /api/upload` with `X-Source: whatsapp` and `X-Sha256`). For each media row of the decrypted database that belongs to a real chat message (not status updates) it finds the file in WhatsApp's Media folder, hashes it and uploads it **only if its SHA-256 equals the hash WhatsApp recorded for that message**. Files are stored like any other file (hash dedupe, size limit `maxBytes`).
+
+The server links a message to its file by that same hash, never by file name: `message.media` = `{mime, name, thumb, file?}`. `file` = `{id, name, mime, size}` is present only when the vault holds a file whose SHA-256 equals the recorded hash of that very message (and the blob is on disk), so a message can only ever load its own file; load it from `/api/files/<file.id>/raw` (or `/download`). `thumb` is `true` when WhatsApp kept a small preview picture for the message.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/chats/thumb/<message id>` | yes | the preview picture (`image/jpeg`, `png` or `webp`), `Cache-Control: private, max-age=3600`. `404` if none or no snapshot |
 
 ## Status codes at a glance
 

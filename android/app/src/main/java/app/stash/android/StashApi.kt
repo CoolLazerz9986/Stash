@@ -125,6 +125,7 @@ object StashApi {
      * [length] and [sha256] must describe exactly the bytes [open] yields; the server re-hashes the upload
      * and rejects it (422) if they differ, so a corrupted backup can't be stored.
      * [readTimeoutMs]: how long to wait for the server's answer after the last byte (the chat import indexes first).
+     * [source]: optional X-Source tag stored with the file ("whatsapp" for chat media); empty = untagged.
      */
     fun upload(
         base: String,
@@ -138,11 +139,13 @@ object StashApi {
         cancelled: () -> Boolean,
         path: String = "/api/upload",
         readTimeoutMs: Int = 120_000,
+        source: String = "",
     ) {
         val headers = HashMap<String, String>(auth(key))
         headers["X-Filename"] = URLEncoder.encode(name, "UTF-8").replace("+", "%20")
         headers["Content-Type"] = mime.ifEmpty { "application/octet-stream" }
         headers["X-Sha256"] = sha256
+        if (source.isNotEmpty()) headers["X-Source"] = source
         val c = conn("$base$path", "POST", headers, readTimeoutMs = readTimeoutMs)
         c.doOutput = true
         c.setFixedLengthStreamingMode(length)

@@ -281,12 +281,12 @@ dialog::backdrop{background:rgba(8,10,16,.6);backdrop-filter:blur(3px)}
   .stat{display:none}
   .statline{display:block;margin:0 2px 8px;color:var(--muted);font-size:13px}
 
-  /* filters scroll sideways; sort and grid/list live behind one button */
+  /* filters scroll sideways; sort, WhatsApp filter and grid/list live behind one button */
   .toolbar{flex-wrap:nowrap;gap:8px;margin-bottom:10px}
   .chips{flex-wrap:nowrap;overflow-x:auto;min-width:0;padding:2px 0;scrollbar-width:none;-webkit-overflow-scrolling:touch}
   .chips::-webkit-scrollbar{display:none}
   .chip{flex:none;min-height:38px;padding:6px 14px;font-size:14px}
-  #sort,.seg{display:none}
+  #sort,#srcSel,.seg{display:none}
   #viewBtn{flex:none}
 
   /* files: no hover on a touch screen; a long press selects */
@@ -448,6 +448,11 @@ dialog.closing::backdrop{animation:hide .17s forwards}
       <option value="za">Name Z&ndash;A</option>
       <option value="big">Largest first</option>
       <option value="small">Smallest first</option>
+    </select>
+    <select class="btn" id="srcSel" title="Show WhatsApp files" hidden>
+      <option value="all">All files</option>
+      <option value="wa">WhatsApp only</option>
+      <option value="other">Hide WhatsApp</option>
     </select>
     <div class="seg"><button id="vGrid" title="Grid view"></button><button id="vList" title="List view"></button></div>
     <button class="btn icon ph" id="viewBtn" type="button" title="View and sort" aria-label="View and sort"></button>
@@ -642,6 +647,9 @@ const PHONE = matchMedia('(max-width:640px), (max-height:480px) and (pointer:coa
 /* ---------- state ---------- */
 let files = [], stats = null, maxBytes = 0, authRequired = false, firstPaint = true;
 let view = store.get('view','grid'), filter = 'all', sortBy = store.get('sort','new'), query = '';
+/* WhatsApp filter: 'all' shows everything, 'wa' only files tagged "whatsapp" (chat media), 'other' hides them.
+   It only has an effect (and its control only shows) while the vault holds at least one such file. */
+let srcMode = store.get('src','all'), hasWa = false;
 const selected = new Set();
 
 /* ---------- api ---------- */
@@ -671,9 +679,15 @@ let refreshTimer;
 const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(refresh, 350); };
 
 /* ---------- derived list ---------- */
+const isWa = f => f.source === 'whatsapp';
+/* the files that pass the WhatsApp filter (everything when the filter is off or there is nothing to filter) */
+function pool(){
+  if (!hasWa || srcMode === 'all') return files;
+  return files.filter(f => srcMode === 'wa' ? isWa(f) : !isWa(f));
+}
 function visible(){
   const q = query.trim().toLowerCase();
-  let out = files.filter(f => (filter==='all' || kindOf(f)===filter) && (!q || f.name.toLowerCase().includes(q) || f.mime.toLowerCase().includes(q)));
+  let out = pool().filter(f => (filter==='all' || kindOf(f)===filter) && (!q || f.name.toLowerCase().includes(q) || f.mime.toLowerCase().includes(q)));
   const by = {
     new:(a,b)=>b.created-a.created, old:(a,b)=>a.created-b.created,
     az:(a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}), za:(a,b)=>b.name.localeCompare(a.name,undefined,{numeric:true}),
@@ -684,7 +698,8 @@ function visible(){
 
 /* ---------- rendering ---------- */
 function render(){
-  renderStats(); renderChips(); renderBulk(); renderFiles();
+  hasWa = files.some(isWa);
+  renderStats(); renderSrc(); renderChips(); renderBulk(); renderFiles();
   if (firstPaint) { firstPaint = false; for (const id of ['#stats','#files']) { const e = $(id); e.classList.remove('fadein'); void e.offsetWidth; e.classList.add('fadein'); } } // first content fades in
 }
 
@@ -700,9 +715,18 @@ function renderStats(){
   );
 }
 
+function renderSrc(){
+  const s = $('#srcSel');
+  s.hidden = !hasWa;
+  s.value = srcMode;
+}
+function setSrc(v){
+  srcMode = v; store.set('src', v);
+  render();
+}
 function renderChips(){
-  const counts = {all: files.length};
-  for (const f of files) { const k = kindOf(f); counts[k] = (counts[k]||0)+1; }
+  const shown = pool(), counts = {all: shown.length};
+  for (const f of shown) { const k = kindOf(f); counts[k] = (counts[k]||0)+1; }
   if (filter !== 'all' && !counts[filter]) filter = 'all';
   $('#chips').replaceChildren(...KINDS.filter(([k]) => k==='all' || counts[k]).map(([k,label]) =>
     h('button',{class:'chip'+(filter===k?' on':''), onclick:()=>{ filter=k; render(); }}, label, h('small',{text:String(counts[k]||0)}))));
@@ -891,6 +915,7 @@ async function renderViewer(dir){
     h('dl',{},
       h('div',{}, h('dt',{text:'Size'}), h('dd',{text:fmtBytes(f.size)+' ('+f.size.toLocaleString()+' bytes)'})),
       h('div',{}, h('dt',{text:'Type'}), h('dd',{text:f.mime})),
+      isWa(f) ? h('div',{}, h('dt',{text:'Source'}), h('dd',{text:'WhatsApp'})) : null,
       h('div',{}, h('dt',{text:'Uploaded'}), h('dd',{text:fmtFull(f.created)})),
       h('div',{}, h('dt',{text:'SHA-256 (click to copy)'}), h('dd',{class:'mono',text:f.sha256,onclick:async e=>{ try { await navigator.clipboard.writeText(f.sha256); toast('Checksum copied'); } catch { toast('Copy not available','err'); } }}))),
     h('div',{class:'btns'},
@@ -1091,12 +1116,15 @@ $('#picker').onchange = e => { enqueue([...e.target.files]); e.target.value = ''
 $('#q').oninput = e => { query = e.target.value; renderBulk(); renderFiles(); };
 $('#sort').value = sortBy;
 $('#sort').onchange = e => { sortBy = e.target.value; store.set('sort', sortBy); renderFiles(); };
+$('#srcSel').value = srcMode;
+$('#srcSel').onchange = e => setSrc(e.target.value);
 const setView = v => { view = v; store.set('view', view); renderFiles(); };
 $('#vGrid').onclick = () => setView('grid');
 $('#vList').onclick = () => setView('list');
 
 /* ---------- phone controls ---------- */
 const hdr = $('header.top');
+const SOURCES = [['all','All files'],['wa','WhatsApp only'],['other','Hide WhatsApp']];
 const SORTS = [['new','Newest first'],['old','Oldest first'],['az','Name A–Z'],['za','Name Z–A'],['big','Largest first'],['small','Smallest first']];
 function closeMenu(){ $('#menu').hidden = true; $('#menuShade').hidden = true; }
 function openMenu(anchor, items){
@@ -1115,7 +1143,8 @@ $('#viewBtn').onclick = e => openMenu(e.currentTarget, [
   {label:'Grid', icon:'grid', on:view==='grid', run:() => setView('grid')},
   {label:'List', icon:'list', on:view==='list', run:() => setView('list')},
   {head:'Sort'},
-  ...SORTS.map(([k,l]) => ({label:l, on:sortBy===k, run:() => { sortBy = k; store.set('sort', k); $('#sort').value = k; renderFiles(); }}))]);
+  ...SORTS.map(([k,l]) => ({label:l, on:sortBy===k, run:() => { sortBy = k; store.set('sort', k); $('#sort').value = k; renderFiles(); }})),
+  ...(hasWa ? [{head:'Show'}, ...SOURCES.map(([k,l]) => ({label:l, on:srcMode===k, run:() => setSrc(k)}))] : [])]);
 $('#moreBtn').onclick = e => {
   const dark = document.documentElement.dataset.theme === 'dark', items = [];
   if (window.StashApp) items.push({label:'Phone backup & settings', icon:'sliders', run:() => StashApp.openSettings()});

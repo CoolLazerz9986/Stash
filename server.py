@@ -23,6 +23,8 @@ Settings (environment variables):
     STASH_CHATS_KEEP    how many chat database snapshots to keep (default 3, 0 = keep all)
 
 The WhatsApp chat vault lives in chats.py (next to this file).
+Files carry an optional "source" tag (header X-Source on upload, e.g. "whatsapp" for chat media). It is only a label:
+it never changes where a file is stored or how it is matched by hash.
 """
 import hashlib
 import hmac
@@ -67,8 +69,10 @@ ID_RE = re.compile(r"[0-9a-f]{32}")
 FILE_ROUTE = re.compile(r"/api/files/([0-9a-f]{32})(?:/(download|raw))?")
 HASH_ROUTE = re.compile(r"/api/files/by-hash/([0-9a-fA-F]{64})")
 CHAT_MSGS = re.compile(r"/api/chats/(\d{1,12})/messages")
+CHAT_THUMB = re.compile(r"/api/chats/thumb/(\d{1,12})")
 SHA_RE = re.compile(r"[0-9a-f]{64}")
-API_VERSION = 2  # 1 = original website API, 2 = adds API key, by-hash lookup, X-Sha256 check (chat routes extend 2, see API.md)
+SOURCE_RE = re.compile(r"[a-z0-9_-]{1,20}")
+API_VERSION = 2  # 1 = original website API, 2 = adds API key, by-hash lookup, X-Sha256 check (chat routes, X-Source and chat media extend 2, see API.md)
 
 INDEX_CSP = (
     "default-src 'self'; script-src 'self' 'unsafe-inline'; "
@@ -136,8 +140,11 @@ def init():
         """CREATE TABLE IF NOT EXISTS files (
                id TEXT PRIMARY KEY, name TEXT NOT NULL, mime TEXT NOT NULL,
                size INTEGER NOT NULL, sha256 TEXT NOT NULL,
-               created REAL NOT NULL, modified REAL NOT NULL)"""
+               created REAL NOT NULL, modified REAL NOT NULL,
+               source TEXT NOT NULL DEFAULT '')"""
     )
+    if "source" not in {r[1] for r in DB.execute("PRAGMA table_info(files)")}:
+        DB.execute("ALTER TABLE files ADD COLUMN source TEXT NOT NULL DEFAULT ''")  # database from before source tags
     DB.execute("CREATE INDEX IF NOT EXISTS files_sha256 ON files(sha256)")
     DB.commit()
 
@@ -214,12 +221,28 @@ def inline_type(mime):
 
 
 def row_dict(r):
-    return {k: r[k] for k in ("id", "name", "mime", "size", "sha256", "created", "modified")}
+    return {k: r[k] for k in ("id", "name", "mime", "size", "sha256", "created", "modified", "source")}
 
 
 def get_row(fid):
     with DBLOCK:
         return DB.execute("SELECT * FROM files WHERE id = ?", (fid,)).fetchone()
+
+
+def vault_lookup(hexes):
+    """For chats.messages(): {sha256 hex: {id, name, mime, size}} for the vault files with these hashes whose blob is
+    on disk. Read-only: the chat code never touches the vault itself."""
+    out = {}
+    hexes = [h for h in hexes if SHA_RE.fullmatch(h)][:400]
+    if not hexes:
+        return out
+    with DBLOCK:
+        rows = DB.execute("SELECT id, name, mime, size, sha256 FROM files WHERE sha256 IN (%s)" % ",".join("?" * len(hexes)),
+                          hexes).fetchall()
+    for r in rows:
+        if r["sha256"] not in out and (BLOBS / r["id"]).is_file():
+            out[r["sha256"]] = {"id": r["id"], "name": r["name"], "mime": r["mime"], "size": r["size"]}
+    return out
 
 
 def make_token():
@@ -390,7 +413,7 @@ class Handler(BaseHTTPRequestHandler):
     # ---- GET ----
     def _get(self):
         u = urlparse(self.path)
-        p, qs = u.path, parse_qs(u.query)
+        p, qs = u.path, parse_qs(u.query, keep_blank_values=True)  # blank kept: ?source= means "untagged only"
         if p in ("/", "/index.html"):
             return self._page("index.html")
         if p in ("/chats", "/chats.html"):
@@ -404,7 +427,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(404, "Not found")
         self._need_auth()
         if p == "/api/files":
-            return self._list()
+            return self._list(qs)
         if p == "/api/app-key":
             return self._json(200, {"key": API_KEY})
         if p == "/api/chats" or p.startswith("/api/chats/"):
@@ -432,13 +455,17 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, body, "text/html; charset=utf-8",
                    {"Content-Security-Policy": INDEX_CSP, "Cache-Control": "no-cache"})
 
-    def _list(self):
+    def _list(self, qs):
         with DBLOCK:
             rows = DB.execute("SELECT * FROM files ORDER BY created DESC").fetchall()
-        files = [row_dict(r) for r in rows]
+        everything = [row_dict(r) for r in rows]
+        files = everything
+        if "source" in qs:  # ?source=whatsapp = only that tag, ?source= = only untagged files
+            want = qs["source"][0].strip().lower()
+            files = [f for f in everything if f["source"] == want]
         self._json(200, {
             "files": files,
-            "stats": {"count": len(files), "bytes": sum(f["size"] for f in files), **disk_info()},
+            "stats": {"count": len(everything), "bytes": sum(f["size"] for f in everything), **disk_info()},
         })
 
     def _chats_get(self, p, qs):
@@ -447,6 +474,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, chats.status())
             if p == "/api/chats":
                 return self._json(200, chats.overview())
+            m = CHAT_THUMB.fullmatch(p)
+            if m:
+                data, ctype = chats.thumb(int(m.group(1)))
+                return self._send(200, data, ctype, {"Cache-Control": "private, max-age=3600"})
             m = CHAT_MSGS.fullmatch(p)
             if m:
                 try:
@@ -454,7 +485,8 @@ class Handler(BaseHTTPRequestHandler):
                     limit = int(qs.get("limit", ["100"])[0] or 100)
                 except ValueError:
                     raise ApiError(400, "before and limit must be numbers")
-                return self._json(200, chats.messages(int(m.group(1)), before, limit, qs.get("q", [""])[0][:100]))
+                return self._json(200, chats.messages(int(m.group(1)), before, limit, qs.get("q", [""])[0][:100],
+                                                      lookup=vault_lookup))
         except chats.ChatError as e:
             raise ApiError(e.status, e.message)
         raise ApiError(404, "Not found")
@@ -580,6 +612,9 @@ class Handler(BaseHTTPRequestHandler):
         want = self.headers.get("X-Sha256", "").strip().lower()
         if want and not SHA_RE.fullmatch(want):
             raise ApiError(400, "X-Sha256 must be 64 hex characters")
+        source = self.headers.get("X-Source", "").strip().lower()
+        if source and not SOURCE_RE.fullmatch(source):
+            raise ApiError(400, "X-Source must be 1-20 characters of a-z 0-9 _ -")
 
         name = clean_name(unquote(self.headers.get("X-Filename", "")))
         fid = uuid.uuid4().hex
@@ -612,8 +647,8 @@ class Handler(BaseHTTPRequestHandler):
             final = unique_name(name)
             os.replace(str(tmp), str(BLOBS / fid))
             try:
-                DB.execute("INSERT INTO files VALUES (?,?,?,?,?,?,?)",
-                           (fid, final, mime, length, digest.hexdigest(), now, now))
+                DB.execute("INSERT INTO files (id, name, mime, size, sha256, created, modified, source) VALUES (?,?,?,?,?,?,?,?)",
+                           (fid, final, mime, length, digest.hexdigest(), now, now, source))
                 DB.commit()
             except Exception:
                 (BLOBS / fid).unlink()

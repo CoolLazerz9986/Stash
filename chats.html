@@ -109,6 +109,15 @@ body.has-chat #qrow{display:block}
 .m .who{font-size:12.5px;font-weight:600;color:var(--accent)}
 .m .lab{color:var(--muted);font-style:italic}
 .m .t{display:block;text-align:right;color:var(--muted);font-size:11.5px}
+/* media inside a message: the picture / player / file link linked to it on the server */
+.m .med{white-space:normal;margin:2px 0 4px}
+.m .med img,.m .med video{display:block;max-width:100%;max-height:320px;border-radius:8px;background:var(--bg)}
+.m .med img{min-width:120px;min-height:80px;object-fit:contain}
+.m .med video{width:min(320px,100%)}
+.m .med audio{display:block;width:min(280px,100%)}
+.m .med .lab{font-size:12.5px;margin-top:3px}
+.m .med a.doc{display:flex;gap:8px;align-items:center;color:var(--accent);font-weight:600;text-decoration:none;word-break:break-all}
+.m .med a.doc small{color:var(--muted);font-weight:400;white-space:nowrap}
 .more{align-self:center;margin:4px 0}
 .empty{margin:auto;color:var(--muted);text-align:center;padding:30px}
 #back{display:none}
@@ -121,6 +130,7 @@ body.has-chat #qrow{display:block}
   /* "peek": while a chat slides in or out, the chat list stays visible underneath it */
   body.peek #list{display:flex}
   body.peek #pane{position:absolute;inset:0;z-index:2;background:var(--bg);box-shadow:-10px 0 24px rgba(0,0,0,.16)}
+  .m{max-width:88%}
 }
 /* the app opened this page for one chat only (no list): show just the chat, at any width */
 .solo #list{display:none!important}
@@ -173,6 +183,7 @@ const afterSlide = () => SLID ? afterMs(280) : null;
 const narrow = () => matchMedia('(max-width:760px)').matches;
 const narrowOpen = () => narrow() && document.body.classList.contains('open');
 let chats = [], cur = null, firstId = 0, seq = 0, loadingMore = false;
+let pin = false; // true while the newest messages are being shown: pictures that finish loading keep the view at the bottom
 
 /* ---------- loading indicators ---------- */
 /* Thin bar at the top while any request runs. It only appears if the wait is longer than 180 ms (no flicker) and fades out. */
@@ -214,8 +225,48 @@ function fmtList(ts) {
   if ((now - d) / 864e5 < 7) return DF_WEEKDAY.format(d);
   return (d.getFullYear() === now.getFullYear() ? DF_MD : DF_YMD).format(d);
 }
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  const u = ['KB', 'MB', 'GB']; let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return (n >= 100 ? n.toFixed(0) : n.toFixed(1)) + ' ' + u[i];
+}
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function spin() { const d = el('div', 'loading'); d.append(document.createElement('i')); return d; }
+
+/* ---------- media inside a message ---------- */
+/* msg.media.file = the vault file whose SHA-256 equals the one WhatsApp recorded for this message (the server matched it),
+   so a message can only ever show its own file. No file yet: show WhatsApp's small preview picture, if it has one. */
+function settle() { if (pin) { const b = $('#msgs'); b.scrollTop = b.scrollHeight; } }
+function fileLink(f) {
+  const a = el('a', 'doc', f.name || 'file'); a.href = '/api/files/' + f.id + '/download'; a.setAttribute('download', f.name || '');
+  if (f.size != null) a.append(el('small', null, fmtBytes(f.size)));
+  return a;
+}
+function mediaNode(m) {
+  const md = m.media, f = md.file, thumbUrl = md.thumb ? '/api/chats/thumb/' + m.id : '';
+  if (!f && !thumbUrl) return null; // nothing to show: the plain [Photo] label stays
+  const wrap = el('div', 'med');
+  if (f) {
+    const raw = '/api/files/' + f.id + '/raw', kind = (f.mime || md.mime || '').split('/')[0];
+    if (kind === 'image') {
+      const i = el('img'); i.loading = 'lazy'; i.alt = f.name || ''; i.src = raw; i.onload = settle;
+      i.onerror = () => i.replaceWith(fileLink(f)); // a format this browser cannot show (HEIC...): offer the download
+      wrap.append(i);
+    } else if (kind === 'video') {
+      const v = el('video'); v.controls = true; v.preload = 'metadata'; if (thumbUrl) v.poster = thumbUrl; v.src = raw; v.onloadedmetadata = settle;
+      v.onerror = () => v.replaceWith(fileLink(f));
+      wrap.append(v);
+    } else if (kind === 'audio') {
+      const a = el('audio'); a.controls = true; a.preload = 'none'; a.src = raw; a.onerror = () => a.replaceWith(fileLink(f));
+      wrap.append(a);
+    } else wrap.append(fileLink(f));
+  } else {
+    const i = el('img'); i.loading = 'lazy'; i.alt = ''; i.src = thumbUrl; i.onload = settle; i.onerror = () => i.remove();
+    wrap.append(i, el('div', 'lab', 'Preview only: the file is not on the server' + (md.name ? ' (' + md.name + ')' : '')));
+  }
+  return wrap;
+}
 
 async function boot() {
   if (SOLO) { // opened by the app for one chat: no list to fetch
@@ -292,7 +343,7 @@ $('#home').addEventListener('click', e => { if (e.ctrlKey || e.metaKey || e.shif
    Past a third of the screen, or a quick flick, it leaves; otherwise it springs back. */
 const EDGE = 80;
 let drag = null;
-function settle(commit) {
+function settleDrag(commit) {
   const d = drag; drag = null;
   if (!d || !d.on) return;
   const el = d.el;
@@ -312,7 +363,7 @@ function slideCloseChat() {
   if (REDUCE) { closeChat(); return; }
   document.body.classList.add('peek');
   drag = {on: true, pane: true, el: $('#pane'), dx: 0, t: 0};
-  requestAnimationFrame(() => settle(true));
+  requestAnimationFrame(() => settleDrag(true));
 }
 /* The touchmove listener is only attached while a swipe that began at the edge is tracked: a permanent non-passive
    touchmove listener would make every scroll on this page wait for JavaScript (laggy on a slow phone). */
@@ -348,9 +399,9 @@ addEventListener('touchend', () => {
   if (!drag) return;
   if (!drag.on) { drag = null; return; }
   const v = drag.dx / Math.max(1, Date.now() - drag.t); // px per ms
-  settle(drag.dx > innerWidth * 0.35 || (drag.dx > 50 && v > 0.5));
+  settleDrag(drag.dx > innerWidth * 0.35 || (drag.dx > 50 && v > 0.5));
 });
-addEventListener('touchcancel', () => { stopMove(); if (drag && drag.on) settle(false); else drag = null; });
+addEventListener('touchcancel', () => { stopMove(); if (drag && drag.on) settleDrag(false); else drag = null; });
 
 /* The Android app calls this when the back gesture / back button is used. true = handled here.
    An open chat on a narrow screen slides closed; anywhere else this page slides back to the files page. */
@@ -363,7 +414,7 @@ window.stashBack = function () {
 
 async function load(older, hold) {
   if (!cur) return;
-  if (older) { if (loadingMore) return; loadingMore = true; }
+  if (older) { if (loadingMore) return; loadingMore = true; pin = false; } else pin = true;
   /* The newest open/search always wins: an older answer that arrives late is dropped. "Load earlier" does not take a new
      number, so it is dropped too if a newer open/search started meanwhile. */
   const my = older ? seq : ++seq, id = cur.id, q = $('#q').value.trim(), box = $('#msgs');
@@ -383,7 +434,9 @@ async function load(older, hold) {
       if (dd !== day) { day = dd; frag.append(el('div', 'day', dd)); }
       const b = el('div', 'm' + (m.me ? ' me' : ''));
       if (m.sender && cur.group) b.append(el('div', 'who', '+' + m.sender));
-      if (m.label) b.append(el('span', 'lab', '[' + m.label + '] '));
+      const mn = m.media ? mediaNode(m) : null;
+      if (m.label && !mn) b.append(el('span', 'lab', '[' + m.label + '] '));
+      if (mn) b.append(mn);
       b.append(document.createTextNode(m.text), el('span', 't', fmtTime(m.ts)));
       frag.append(b);
     }
@@ -399,6 +452,8 @@ async function load(older, hold) {
 
 $('#filter').oninput = drawList;
 $('#back').onclick = () => { if (SOLO) StashApp.closePage(); else if (narrowOpen()) slideCloseChat(); else closeChat(); };
+/* the moment the reader scrolls or touches the messages, pictures stop pulling the view to the bottom */
+for (const ev of ['wheel', 'touchstart', 'keydown']) $('#msgs').addEventListener(ev, () => { pin = false; }, {passive: true});
 let qt; $('#q').oninput = () => { clearTimeout(qt); qt = setTimeout(async () => { firstId = 0; await load(false); const m = $('#msgs'); m.scrollTop = m.scrollHeight; }, 350); };
 boot();
 </script>
