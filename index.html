@@ -110,7 +110,7 @@ main{max-width:1180px;margin:0 auto;padding:22px clamp(14px,4vw,32px) 120px}
 .drop b{display:block;font-size:16px}
 .drop span{color:var(--muted);font-size:13.5px}
 .dragover{position:fixed;inset:0;z-index:60;display:none;place-items:center;background:color-mix(in srgb,var(--bg) 70%,transparent);backdrop-filter:blur(6px)}
-.dragover.on{display:grid}
+.dragover.on{display:grid;animation:show .15s}
 .dragover div{border:3px dashed var(--accent);border-radius:24px;padding:60px 70px;font-size:22px;font-weight:700;color:var(--accent);background:var(--panel);box-shadow:var(--shadow);display:flex;gap:14px;align-items:center}
 
 /* toolbar */
@@ -360,7 +360,42 @@ button,.card,.row,.drop,.chip{touch-action:manipulation}
 .seg button:active{background:var(--accent-soft)}
 .drop:active{transform:scale(.99);background:color-mix(in srgb,var(--accent) 14%,var(--panel))}
 .navbtn:active{transform:translateY(-50%) scale(.92)}
-@media (prefers-reduced-motion:reduce){.btn:active,.chip:active,.card:active,.drop:active,.navbtn:active{transform:none}.navbtn:active{transform:translateY(-50%)}.sp-logo{animation:none}.enter-back #page{animation:none}}
+
+/* ---- fade and slide animations (only opacity and transform: cheap on a weak GPU) ---- */
+@keyframes dlgIn{from{opacity:0;transform:scale(.97)}}
+@keyframes dlgOut{to{opacity:0;transform:scale(.97)}}
+@keyframes hide{to{opacity:0}}
+@keyframes up{from{opacity:0;transform:translateY(12px)}}
+@keyframes inFromR{from{opacity:0;transform:translateX(48px)}}
+@keyframes inFromL{from{opacity:0;transform:translateX(-48px)}}
+@keyframes outToL{to{opacity:0;transform:translateX(-48px)}}
+@keyframes outToR{to{opacity:0;transform:translateX(48px)}}
+@keyframes toastOut{to{opacity:0;transform:translateY(8px)}}
+/* dialogs and the file viewer fade in; the "closing" class (set by the script) fades them out before they close */
+dialog[open]{animation:dlgIn .2s cubic-bezier(.2,.8,.2,1)}
+dialog[open]::backdrop{animation:show .2s}
+dialog.closing{animation:dlgOut .17s ease-in forwards}
+dialog.closing::backdrop{animation:hide .17s forwards}
+/* the picture fades in once it has loaded (thumbnails too) */
+.stage img.pv,.thumb img{opacity:0;transition:opacity .3s}
+.stage img.pv.ld,.thumb img.ld{opacity:1}
+/* moving to the next / previous file: the old one slides out, the new one slides in from that side */
+.in-fwd>.pv,.in-fwd>.noprev{animation:inFromR .26s cubic-bezier(.2,.8,.2,1)}
+.in-back>.pv,.in-back>.noprev{animation:inFromL .26s cubic-bezier(.2,.8,.2,1)}
+.out-fwd>.pv,.out-fwd>.noprev{animation:outToL .12s ease-in forwards}
+.out-back>.pv,.out-back>.noprev{animation:outToR .12s ease-in forwards}
+/* small things that appear */
+#menu:not([hidden]){animation:show .15s}
+#login:not([hidden]){animation:show .25s}
+.job{animation:show .2s}
+.uploads:not([hidden]),.bulk:not([hidden]){animation:up .22s cubic-bezier(.2,.8,.2,1)}
+.toast.out{animation:toastOut .2s forwards}
+@media (prefers-reduced-motion:reduce){
+  .btn:active,.chip:active,.card:active,.drop:active,.navbtn:active{transform:none}.navbtn:active{transform:translateY(-50%)}.sp-logo{animation:none}.enter-back #page{animation:none}
+  dialog[open],dialog[open]::backdrop,dialog.closing,dialog.closing::backdrop,.in-fwd>.pv,.in-fwd>.noprev,.in-back>.pv,.in-back>.noprev,.out-fwd>.pv,.out-fwd>.noprev,.out-back>.pv,.out-back>.noprev,
+  #menu:not([hidden]),#login:not([hidden]),.job,.uploads:not([hidden]),.bulk:not([hidden]),.toast.out{animation:none}
+  .stage img.pv,.thumb img{transition:none}
+}
 </style>
 </head>
 <body>
@@ -445,6 +480,16 @@ button,.card,.row,.drop,.chip{touch-action:manipulation}
 /* ---------- tiny helpers ---------- */
 const $ = s => document.querySelector(s);
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* Every dialog.close() (X button, click outside, Esc, the app's Back) fades the dialog out first, then really closes it. */
+(function () {
+  const realClose = HTMLDialogElement.prototype.close;
+  HTMLDialogElement.prototype.close = function (rv) {
+    if (!this.open || REDUCE) return realClose.call(this, rv);
+    if (this.classList.contains('closing')) return;
+    this.classList.add('closing');
+    setTimeout(() => { this.classList.remove('closing'); realClose.call(this, rv); }, 170);
+  };
+})();
 /* When this page arrived by a slide, heavy work (building the file list, decoding photos) waits until the slide has
    finished; run in the middle of the animation it makes the slide stutter. Returns a promise to wait on, or null. */
 const SLID = document.documentElement.classList.contains('enter-back') || document.documentElement.classList.contains('enter-fwd');
@@ -522,7 +567,7 @@ function fmtWhen(ts){
 const fmtFull = ts => DF_FULL.format(new Date(ts*1000));
 function toast(msg, kind){
   const t = h('div',{class:'toast '+(kind||''),text:msg}); $('#toasts').append(t);
-  setTimeout(()=>t.remove(), 3500);
+  setTimeout(()=>{ t.classList.add('out'); setTimeout(()=>t.remove(), 220); }, 3300);
 }
 const store = {
   get(k,d){ try { return localStorage.getItem(k) ?? d; } catch { return d; } },
@@ -692,6 +737,7 @@ function thumb(f, big){
   const k = kindOf(f);
   if (k==='image' && f.size < 8*1024*1024 && f.mime !== 'image/heic' && !f.mime.includes('tiff')) {
     const img = h('img',{loading:'lazy',decoding:'async',alt:'',src:rawUrl(f)});
+    img.onload = () => img.classList.add('ld'); // fades in once it has loaded
     img.onerror = () => { const c = img.closest('.card'); if (c) c.classList.add('ni'); img.replaceWith(ic(k)); };
     return img;
   }
@@ -789,16 +835,28 @@ function ask({title, body, input, ok='OK', danger=false}){
     if (inp) { inp.focus(); const dot = inp.value.lastIndexOf('.'); inp.setSelectionRange(0, dot > 0 ? dot : inp.value.length); }
   });
 }
+/* Esc fades the dialog out like every other way of closing it */
+for (const id of ['#dlg', '#viewer']) { const d = $(id); d.addEventListener('cancel', e => { e.preventDefault(); d.close(); }); }
 
 /* ---------- viewer ---------- */
-let vList = [], vIdx = 0, vToken = 0;
-function openViewer(list, i){ vList = list; vIdx = i; renderViewer(); if (!$('#viewer').open) $('#viewer').showModal(); }
-function stepViewer(d){ if (vList.length < 2) return; vIdx = (vIdx + d + vList.length) % vList.length; renderViewer(); }
+let vList = [], vIdx = 0, vToken = 0, vStep = 0;
+function openViewer(list, i){ clearTimeout(vStep); vStep = 0; vList = list; vIdx = i; renderViewer(); if (!$('#viewer').open) $('#viewer').showModal(); }
+/* Next / previous file: the picture on screen slides out, then the new one slides in from that side. */
+function stepViewer(d){
+  if (vList.length < 2) return;
+  vIdx = (vIdx + d + vList.length) % vList.length;
+  const st = $('#viewer .stage');
+  if (REDUCE || !st) { renderViewer(d); return; }
+  st.classList.remove('in-fwd', 'in-back');
+  st.classList.add(d > 0 ? 'out-fwd' : 'out-back');
+  clearTimeout(vStep);
+  vStep = setTimeout(() => { vStep = 0; renderViewer(d); }, 120); // quick presses in a row: only the last one is drawn
+}
 
-async function renderViewer(){
+async function renderViewer(dir){
   const f = vList[vIdx], k = kindOf(f), kind = previewOf(f), token = ++vToken;
   const v = $('#viewer');
-  const stage = h('div',{class:'stage k-'+k});
+  const stage = h('div',{class:'stage k-'+k+(dir && !REDUCE ? (dir > 0 ? ' in-fwd' : ' in-back') : '')});
   if (vList.length > 1) stage.append(
     h('button',{class:'navbtn l',title:'Previous (←)',onclick:()=>stepViewer(-1)}, ic('left')),
     h('button',{class:'navbtn r',title:'Next (→)',onclick:()=>stepViewer(1)}, ic('right')));
@@ -814,10 +872,16 @@ async function renderViewer(){
   stage.addEventListener('click', e => { if (PHONE.matches && e.target.closest('img')) $('#viewer').classList.toggle('bare'); }); // tap the picture: hide / show the buttons
   const fallback = msg => { stage.querySelectorAll('.pv').forEach(e => e.remove()); stage.append(h('div',{class:'noprev pv'}, h('div',{class:'tile'}, ic(k)), h('div',{text:msg}))); };
 
-  if (kind === 'image') { const im = h('img',{class:'pv',alt:f.name,src:rawUrl(f)}); im.onerror = () => fallback("Your browser can't display this image type."); stage.append(im); }
-  else if (kind === 'video') { const vd = h('video',{class:'pv',controls:true,preload:'metadata',src:rawUrl(f)}); vd.onerror = () => fallback("Your browser can't play this video format. Download it instead."); stage.append(vd); }
+  if (kind === 'image') {
+    const im = h('img',{class:'pv',alt:f.name,src:rawUrl(f)});
+    im.onload = () => im.classList.add('ld'); // fades in once it has loaded
+    im.onerror = () => fallback("Your browser can't display this image type.");
+    if (im.complete && im.naturalWidth) im.classList.add('ld');
+    stage.append(im);
+  }
+  else if (kind === 'video') { const vd = h('video',{class:'pv fadein',controls:true,preload:'metadata',src:rawUrl(f)}); vd.onerror = () => fallback("Your browser can't play this video format. Download it instead."); stage.append(vd); }
   else if (kind === 'audio') { const a = h('audio',{class:'pv',controls:true,preload:'metadata',src:rawUrl(f),style:'width:min(520px,90%)'}); a.onerror = () => fallback("Your browser can't play this audio format."); stage.append(h('div',{class:'noprev'}, h('div',{class:'tile'}, ic(k)), a)); }
-  else if (kind === 'pdf') stage.append(h('iframe',{class:'pv',src:rawUrl(f),title:f.name}));
+  else if (kind === 'pdf') stage.append(h('iframe',{class:'pv fadein',src:rawUrl(f),title:f.name}));
   else if (kind === 'text' || kind === 'table') {
     stage.append(h('div',{class:'loading pv'}, h('i')));
     loadText(f, kind, stage, token, fallback);
@@ -886,7 +950,7 @@ function tableOf(rows){
     h('tbody',{}, rows.slice(1).map((r,i) => h('tr',{}, h('td',{text:String(i+1)}), pad(r).map(c => h('td',{text:c,title:c}))))));
 }
 $('#viewer').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
-$('#viewer').addEventListener('close', () => { vToken++; $('#viewer').classList.remove('bare'); $('#viewer').replaceChildren(); });
+$('#viewer').addEventListener('close', () => { vToken++; clearTimeout(vStep); vStep = 0; $('#viewer').classList.remove('bare'); $('#viewer').replaceChildren(); });
 
 /* ---------- uploads ---------- */
 const jobs = []; let jobSeq = 0, running = 0;
