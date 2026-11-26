@@ -98,6 +98,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
                     onProgress = { sent -> tick(item, sent, bytes, i, todo.size) },
                     cancelled = { isStopped },
                 )
+                preview(base, item.uri, item.mime, sha)
                 db.mark(key, item.size, item.modified, sha, "uploaded"); uploaded++
             } catch (e: UploadCancelled) {
                 return Result.retry()
@@ -147,6 +148,15 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
     }
 
     // ---- local file access -------------------------------------------------------------------------------
+
+    /** Sends a small preview of a file that was just uploaded, so the website's grid does not load the original. Best effort. */
+    private fun preview(base: String, uri: Uri, mime: String, sha: String) {
+        try {
+            Thumbs.make(applicationContext, uri, mime)?.let { StashApi.putThumb(base, prefs.apiKey, sha, it) }
+        } catch (e: Exception) {
+            // a missing preview only means the website loads the original once and makes its own
+        }
+    }
 
     private fun open(uri: Uri): InputStream {
         try {

@@ -54,6 +54,7 @@ import chats
 BASE = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("STASH_DATA", str(BASE / "data"))).resolve()
 BLOBS = DATA / "blobs"
+THUMBS = DATA / "thumbs"  # small JPEG previews, one per SHA-256: thumbs/<sha256>.jpg
 TMP = DATA / "tmp"
 PASSWORD = os.environ.get("STASH_PASSWORD", "")
 PORT = int(os.environ.get("STASH_PORT", "8080"))
@@ -68,6 +69,9 @@ COOKIE = "stash_session"
 ID_RE = re.compile(r"[0-9a-f]{32}")
 FILE_ROUTE = re.compile(r"/api/files/([0-9a-f]{32})(?:/(download|raw))?")
 HASH_ROUTE = re.compile(r"/api/files/by-hash/([0-9a-fA-F]{64})")
+THUMB_ROUTE = re.compile(r"/api/files/([0-9a-f]{32})/thumb")
+HASH_THUMB = re.compile(r"/api/files/by-hash/([0-9a-fA-F]{64})/thumb")
+THUMB_MAX = 128 * 1024
 CHAT_MSGS = re.compile(r"/api/chats/(\d{1,12})/messages")
 CHAT_THUMB = re.compile(r"/api/chats/thumb/(\d{1,12})")
 SHA_RE = re.compile(r"[0-9a-f]{64}")
@@ -103,7 +107,7 @@ FAIL_LOCK = threading.Lock()
 # --------------------------------------------------------------------------
 def init():
     global DB, KEY, API_KEY
-    for d in (DATA, BLOBS, TMP):
+    for d in (DATA, BLOBS, THUMBS, TMP):
         d.mkdir(parents=True, exist_ok=True)
     chats.init(DATA, CHATS_KEEP, CHATS_MAX_BYTES)
     for leftover in TMP.glob("*"):  # unfinished uploads from a previous run
@@ -410,6 +414,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self._guard(self._delete)
 
+    def do_PUT(self):
+        self._guard(self._put)
+
     # ---- GET ----
     def _get(self):
         u = urlparse(self.path)
@@ -435,10 +442,51 @@ class Handler(BaseHTTPRequestHandler):
         m = HASH_ROUTE.fullmatch(p)
         if m:
             return self._by_hash(m.group(1).lower())
+        m = THUMB_ROUTE.fullmatch(p)
+        if m:
+            return self._thumb(m.group(1))
         m = FILE_ROUTE.fullmatch(p)
         if m and m.group(2):
             return self._file(m.group(1), m.group(2), qs)
         raise ApiError(404, "Not found")
+
+    def _thumb(self, fid):
+        row = get_row(fid)
+        if not row:
+            raise ApiError(404, "File not found")
+        try:
+            data = (THUMBS / (row["sha256"] + ".jpg")).read_bytes()
+        except OSError:
+            raise ApiError(404, "No preview")
+        self._send(200, data, "image/jpeg", {"Cache-Control": "private, max-age=86400", "ETag": '"%s"' % row["sha256"][:24]})
+
+    def _put(self):
+        self._need_auth()
+        m = HASH_THUMB.fullmatch(urlparse(self.path).path)
+        if not m:
+            raise ApiError(404, "Not found")
+        digest = m.group(1).lower()
+        try:
+            n = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            raise ApiError(411, "Content-Length header is required")
+        if n < 0 or n > THUMB_MAX:
+            raise ApiError(413, "A preview may be at most %d KB" % (THUMB_MAX // 1024))
+        data = self.rfile.read(n) if n else b""
+        if data[:3] != b"\xff\xd8\xff":
+            raise ApiError(422, "A preview must be a JPEG")
+        with DBLOCK:
+            known = DB.execute("SELECT 1 FROM files WHERE sha256 = ? LIMIT 1", (digest,)).fetchone()
+        if not known:
+            raise ApiError(404, "No file with that SHA-256")
+        tmp = TMP / (uuid.uuid4().hex + ".thumb")
+        try:
+            tmp.write_bytes(data)
+            os.replace(str(tmp), str(THUMBS / (digest + ".jpg")))
+        except OSError:
+            tmp.unlink() if tmp.exists() else None
+            raise ApiError(507, "Could not write the preview to disk")
+        self._json(201, {"ok": True})
 
     def _by_hash(self, digest):
         with DBLOCK:
@@ -458,7 +506,8 @@ class Handler(BaseHTTPRequestHandler):
     def _list(self, qs):
         with DBLOCK:
             rows = DB.execute("SELECT * FROM files ORDER BY created DESC").fetchall()
-        everything = [row_dict(r) for r in rows]
+        have = {n[:-4] for n in os.listdir(str(THUMBS)) if n.endswith(".jpg")}  # one directory read for all files
+        everything = [dict(row_dict(r), thumb=r["sha256"] in have) for r in rows]
         files = everything
         if "source" in qs:  # ?source=whatsapp = only that tag, ?source= = only untagged files
             want = qs["source"][0].strip().lower()
@@ -748,10 +797,17 @@ class Handler(BaseHTTPRequestHandler):
         if not m or m.group(2):
             raise ApiError(404, "Not found")
         with DBLOCK:
+            gone = DB.execute("SELECT sha256 FROM files WHERE id = ?", (m.group(1),)).fetchone()
             cur = DB.execute("DELETE FROM files WHERE id = ?", (m.group(1),))
             DB.commit()
+            last = bool(gone) and not DB.execute("SELECT 1 FROM files WHERE sha256 = ? LIMIT 1", (gone["sha256"],)).fetchone()
         if not cur.rowcount:
             raise ApiError(404, "File not found")
+        if last:  # the preview goes with the last file that had this content
+            try:
+                (THUMBS / (gone["sha256"] + ".jpg")).unlink()
+            except OSError:
+                pass
         try:
             (BLOBS / m.group(1)).unlink()
         except OSError:

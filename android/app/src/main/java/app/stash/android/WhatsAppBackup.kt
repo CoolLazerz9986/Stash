@@ -341,6 +341,15 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         return if (raw.size == 32) raw.joinToString("") { "%02x".format(it) } else null
     }
 
+    /** Sends a small preview of a file that was just uploaded, so the website's grid does not load the original. Best effort. */
+    private fun preview(base: String, uri: Uri, mime: String, sha: String) {
+        try {
+            Thumbs.make(applicationContext, uri, mime)?.let { StashApi.putThumb(base, prefs.apiKey, sha, it) }
+        } catch (e: Exception) {
+            // a missing preview only means the website loads the original once and makes its own
+        }
+    }
+
     private fun openIn(uri: Uri): InputStream =
         try {
             applicationContext.contentResolver.openInputStream(uri) ?: throw SourceException("could not open the file")
@@ -443,6 +452,7 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                             cancelled = { isStopped },
                             source = "whatsapp",
                         )
+                        preview(base, f.uri, f.mime, sha)
                         backupDb.mark(key, f.size, f.modified, sha, "uploaded"); st.uploaded++
                     } catch (e: UploadCancelled) {
                         return Result.retry()

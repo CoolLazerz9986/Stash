@@ -93,6 +93,23 @@ object StashApi {
     }
 
     /** Does the server already hold a file with this SHA-256? */
+    /**
+     * PUT /api/files/by-hash/<sha256>/thumb: stores a small JPEG preview for the file with that SHA-256. Best effort: the caller
+     * ignores every failure, because a missing preview only means the website loads the original once.
+     */
+    fun putThumb(base: String, key: String, sha256: String, jpeg: ByteArray) {
+        val c = conn("$base/api/files/by-hash/$sha256/thumb", "PUT", auth(key) + ("Content-Type" to "image/jpeg"))
+        try {
+            c.doOutput = true
+            c.setFixedLengthStreamingMode(jpeg.size)
+            c.outputStream.use { it.write(jpeg) }
+            val code = c.responseCode
+            if (code != 201) throw ApiException(code, errorText(bodyOf(c), "HTTP $code"))
+        } finally {
+            c.disconnect()
+        }
+    }
+
     fun exists(base: String, key: String, sha256: String): Boolean {
         val c = conn("$base/api/files/by-hash/$sha256", "GET", auth(key))
         try {

@@ -34,6 +34,8 @@ Sessions are stateless: `POST /api/logout` only clears the cookie. Changing `STA
 | POST | `/api/logout` | no | clears the cookie |
 | GET | `/api/app-key` | yes | `{"key": "<api key>"}` (empty string when the server has no password and no `STASH_API_KEY`) |
 | GET | `/api/files` | yes | `{"files":[file…],"stats":{"count","bytes","total","free"}}`, newest first. `bytes` = total size of stored files; `total`/`free` = disk of the data folder. Optional `?source=whatsapp` lists only files with that tag, `?source=` (empty) only untagged files; `stats` always cover every file |
+| GET | `/api/files/<id>/thumb` | yes | the small preview picture (`image/jpeg`, at most 128 KB) of a file, `Cache-Control: private, max-age=86400`. `404` if the file has none yet |
+| PUT | `/api/files/by-hash/<sha256>/thumb` | yes | body = a JPEG of at most 128 KB (`Content-Length` required, `Content-Type` ignored). Stores it as the preview of the file(s) with that SHA-256. `201` stored, `404` no such file, `413` too big, `422` not a JPEG. Replaces an earlier preview. The phone app and the website send these (about 320 px wide); only previews are stored, never the other way round |
 | GET | `/api/files/by-hash/<sha256>` | yes | 64 hex chars, case-insensitive (anything else is `404`). `{"exists":bool,"file":file\|null}`. Only `true` if the blob really is on disk. |
 | GET | `/api/files/<id>/download` | yes | attachment. Supports `Range`, `ETag` |
 | GET | `/api/files/<id>/raw` | yes | inline preview. Text-like types are always `text/plain`; SVG is sandboxed; types with no safe inline form are sent as attachments. `?as=text` forces `text/plain` (used for the text/CSV previews) |
@@ -46,7 +48,7 @@ Sessions are stateless: `POST /api/logout` only clears the cookie. Changing `STA
 | GET | `/api/chats/<chat id>/messages` | yes | `?limit=` (1–200, default 100) `&before=<message id>` `&q=<text>`. `{"messages":[message…],"more":bool}`. Messages are the newest `limit` ones (or the newest before `before`), returned oldest first. `q` keeps messages whose text contains it (case-insensitive, max 100 chars). `400` if `before`/`limit` are not numbers, `404` unknown chat or no snapshot |
 | POST | `/api/chats/import` | yes | see "WhatsApp chats". `201` + the snapshot object |
 
-`file` = `{id, name, mime, size, sha256, created, modified, source}` (`created`/`modified` are Unix seconds, `id` is 32 hex chars, `source` is the upload tag, `""` if none).
+`file` = `{id, name, mime, size, sha256, created, modified, source}`; `GET /api/files` also adds `thumb` (bool, a preview exists) (`created`/`modified` are Unix seconds, `id` is 32 hex chars, `source` is the upload tag, `""` if none).
 
 `download` and `raw` also answer `HEAD`, `Range` (`206`, or `416` if out of range) and `If-None-Match` (`304`). The `ETag` is the first 24 hex chars of the file's SHA-256.
 When a password is set, any other path under `/api/` answers `401` before it answers `404`. Anything not under `/api/` and not listed above is `404`.

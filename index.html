@@ -761,11 +761,34 @@ function toggleSel(id, ev){
   renderBulk();
 }
 
+/* One preview at a time, so the page never stalls while it makes them. Best effort: any failure just means the next visit tries again. */
+let thumbQ = Promise.resolve();
+function queueThumb(f, img){
+  if (f.thumbBusy || !f.sha256) return;
+  f.thumbBusy = true;
+  thumbQ = thumbQ.then(async () => {
+    try {
+      const w = img.naturalWidth, hh = img.naturalHeight;
+      if (!w || !hh) return;
+      const sc = Math.min(1, 320 / Math.max(w, hh)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(hh * sc));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.72));
+      if (!blob || blob.size > 120 * 1024) return;
+      const r = await fetch('/api/files/by-hash/' + f.sha256 + '/thumb', {method:'PUT', body: blob, credentials:'same-origin'});
+      if (r.ok) f.thumb = true;
+    } catch (e) { /* tainted canvas, no auth, server busy: skip */ }
+    finally { f.thumbBusy = false; }
+  });
+}
+
 function thumb(f, big){
   const k = kindOf(f);
   if (k==='image' && f.size < 8*1024*1024 && f.mime !== 'image/heic' && !f.mime.includes('tiff')) {
-    const img = h('img',{loading:'lazy',decoding:'async',alt:'',src:rawUrl(f)});
-    img.onload = () => img.classList.add('ld'); // fades in once it has loaded
+    /* A stored preview (about 320 px, 10-30 KB) when the server has one; otherwise the original, and once that has loaded
+       the browser makes the preview itself and sends it to the server, so each picture is only ever loaded big once. */
+    const small = !!f.thumb, img = h('img',{loading:'lazy',decoding:'async',alt:'',src: small ? '/api/files/'+f.id+'/thumb' : rawUrl(f)});
+    img.onload = () => { img.classList.add('ld'); if (!small && !f.thumb) queueThumb(f, img); }; // fades in once it has loaded
     img.onerror = () => { const c = img.closest('.card'); if (c) c.classList.add('ni'); img.replaceWith(ic(k)); };
     return img;
   }
