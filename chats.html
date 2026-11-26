@@ -103,6 +103,9 @@ body.has-chat #qrow{display:block}
 #qrow{padding:0 12px 10px;background:var(--panel);border-bottom:1px solid var(--line)}
 #qrow .sbox{margin:0}
 #msgs{flex:1;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:4px}
+/* messages fade in as they scroll into view and out as they leave (class .fx is only set without reduced motion) */
+#msgs.fx .m,#msgs.fx .day{transition:opacity .2s ease}
+#msgs.fx .m:not(.in),#msgs.fx .day:not(.in){opacity:0}
 .day{align-self:center;background:var(--panel);border:1px solid var(--line);color:var(--muted);font-size:12.5px;border-radius:999px;padding:2px 12px;margin:8px 0}
 .m{max-width:min(75%,620px);padding:6px 10px;border-radius:12px;background:var(--them);border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
 .m.me{align-self:flex-end;background:var(--me)}
@@ -183,6 +186,22 @@ const afterSlide = () => SLID ? afterMs(280) : null;
 const narrow = () => matchMedia('(max-width:760px)').matches;
 const narrowOpen = () => narrow() && document.body.classList.contains('open');
 let chats = [], cur = null, firstId = 0, seq = 0, loadingMore = false;
+/* Fade while scrolling, and the next older page loads by itself when the "Load earlier" button comes near the top. */
+const HAS_IO = 'IntersectionObserver' in window, FX = HAS_IO && !REDUCE;
+let fadeIO = null, moreIO = null;
+function watchMsgs(box, nodes, more) {
+  box.classList.toggle('fx', FX);
+  if (FX) {
+    if (!fadeIO) fadeIO = new IntersectionObserver(es => { for (const e of es) e.target.classList.toggle('in', e.isIntersecting); },
+      { root: box, rootMargin: '-24px 0px -24px 0px' });
+    nodes.forEach(n => fadeIO.observe(n));
+  }
+  if (HAS_IO) {
+    if (moreIO) moreIO.disconnect();
+    moreIO = null;
+    if (more) { moreIO = new IntersectionObserver(es => { if (es[0].isIntersecting) load(true); }, { root: box, rootMargin: '400px 0px 0px 0px' }); moreIO.observe(more); }
+  }
+}
 let pin = false; // true while the newest messages are being shown: pictures that finish loading keep the view at the bottom
 
 /* ---------- loading indicators ---------- */
@@ -418,7 +437,7 @@ async function load(older, hold) {
   /* The newest open/search always wins: an older answer that arrives late is dropped. "Load earlier" does not take a new
      number, so it is dropped too if a newer open/search started meanwhile. */
   const my = older ? seq : ++seq, id = cur.id, q = $('#q').value.trim(), box = $('#msgs');
-  if (!older) box.replaceChildren(spin());
+  if (!older) { if (fadeIO) { fadeIO.disconnect(); fadeIO = null; } box.replaceChildren(spin()); }
   try {
     const d = await api('/api/chats/' + id + '/messages?limit=100' + (older && firstId ? '&before=' + firstId : '') + (q ? '&q=' + encodeURIComponent(q) : ''));
     if (hold) await hold; // a chat that is still sliding in is filled in after the slide
@@ -429,19 +448,21 @@ async function load(older, hold) {
     const frag = document.createDocumentFragment();
     if (d.more) { const b = el('button', 'btn pill more', 'Load earlier messages'); b.type = 'button'; b.onclick = () => load(true); frag.append(b); }
     let day = '';
+    const items = [];
     for (const m of d.messages) {
       const dd = fmtDay(m.ts);
-      if (dd !== day) { day = dd; frag.append(el('div', 'day', dd)); }
+      if (dd !== day) { day = dd; const dv = el('div', 'day', dd); items.push(dv); frag.append(dv); }
       const b = el('div', 'm' + (m.me ? ' me' : ''));
       if (m.sender && cur.group) b.append(el('div', 'who', '+' + m.sender));
       const mn = m.media ? mediaNode(m) : null;
       if (m.label && !mn) b.append(el('span', 'lab', '[' + m.label + '] '));
       if (mn) b.append(mn);
       b.append(document.createTextNode(m.text), el('span', 't', fmtTime(m.ts)));
-      frag.append(b);
+      items.push(b); frag.append(b);
     }
     if (!d.messages.length && !older) frag.append(el('div', 'empty', q ? 'No message contains that.' : 'Empty chat.'));
     if (d.messages.length) firstId = d.messages[0].id;
+    watchMsgs(box, items, frag.querySelector('.more'));
     if (older) { const first = box.querySelector('.day'); if (first && first.textContent === day) first.remove(); box.prepend(frag); box.scrollTop = box.scrollHeight - oldHeight; }
     else { box.append(frag); box.classList.remove('fadein'); void box.offsetWidth; box.classList.add('fadein'); }
   } catch (e) {

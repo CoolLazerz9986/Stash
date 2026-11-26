@@ -130,6 +130,10 @@ select.btn{padding-right:10px;appearance:auto}
 /* grid */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px}
 .card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:.15s}
+.sentinel{height:1px}
+/* fade while scrolling: cards/rows are transparent until the observer marks them .in (only when .fx is set: no reduced motion) */
+.fx .card,.fx .row:not(.head){transition:opacity .22s ease,transform .15s,box-shadow .15s}
+.fx .card:not(.in),.fx .row:not(.head):not(.in){opacity:0}
 .card:hover{box-shadow:var(--shadow);transform:translateY(-2px)}
 .card.sel{outline:2px solid var(--accent);outline-offset:-2px}
 .thumb{height:130px;display:grid;place-items:center;background:color-mix(in srgb,var(--k) 10%,var(--panel));color:var(--k);overflow:hidden}
@@ -768,10 +772,42 @@ function thumb(f, big){
   return ic(k);
 }
 
+/* Many files: only the first CHUNK are built; the next CHUNK is appended when the end comes within ~900px of the screen,
+   so a vault with thousands of files never puts thousands of cards in the page. Cards and rows fade in as they scroll
+   into view and fade out as they leave (an IntersectionObserver toggles .in; no scroll listener). */
+const CHUNK = 72, HAS_IO = 'IntersectionObserver' in window;
+let shownN = CHUNK, shownKey = '', moreIO = null, fadeIO = null;
+
+function buildItem(f, i, list){
+  const k = kindOf(f), sel = selected.has(f.id), open = () => PHONE.matches && selected.size ? toggleSel(f.id) : openViewer(list,i);
+  if (view === 'grid') {
+    const th = thumb(f);
+    return h('div',{class:'card k-'+k+(sel?' sel':'')+(th.tagName==='IMG'?'':' ni'), 'data-id':f.id, onclick:open},
+      h('div',{class:'thumb'}, th),
+      extOf(f.name) ? h('span',{class:'ext',text:extOf(f.name).slice(0,5)}) : null,
+      h('div',{class:'pick',onclick:e=>toggleSel(f.id,e)}, ic('check')),
+      h('div',{class:'meta'}, h('div',{class:'name',title:f.name,text:f.name}),
+        h('div',{class:'sub',text:fmtBytes(f.size)+' · '+fmtWhen(f.created)})));
+  }
+  return h('div',{class:'row k-'+k+(sel?' sel':''), 'data-id':f.id, onclick:open},
+    h('div',{class:'pick',onclick:e=>toggleSel(f.id,e)}, ic('check')),
+    h('div',{class:'nm'}, h('div',{class:'tile'}, ic(k)),
+      h('div',{class:'nmt'}, h('div',{class:'name',title:f.name,text:f.name}), h('div',{class:'sub m',text:fmtBytes(f.size)+' · '+fmtWhen(f.created)}))),
+    h('div',{class:'c',text:fmtBytes(f.size)}),
+    h('div',{class:'c type',text:(extOf(f.name)||'file').toUpperCase()}),
+    h('div',{class:'c when',title:fmtFull(f.created),text:fmtWhen(f.created)}),
+    h('div',{class:'acts'},
+      h('button',{class:'btn ghost icon sm',title:'Download',onclick:e=>{ e.stopPropagation(); download(f); }}, ic('download')),
+      h('button',{class:'btn ghost icon sm',title:'Delete',onclick:e=>{ e.stopPropagation(); removeFiles([f]); }}, ic('trash'))));
+}
+
 function renderFiles(){
   const list = visible(), root = $('#files');
   $('#vGrid').classList.toggle('on', view==='grid');
   $('#vList').classList.toggle('on', view==='list');
+  if (moreIO) moreIO.disconnect();
+  if (fadeIO) fadeIO.disconnect();
+  moreIO = fadeIO = null;
   if (!list.length) {
     root.replaceChildren(h('div',{class:'empty'},
       h('div',{class:'tile'}, ic(files.length ? 'search' : 'box')),
@@ -779,36 +815,43 @@ function renderFiles(){
       h('div',{text: files.length ? 'Try a different search or filter.' : (PHONE.matches ? 'Tap the + button to upload files.' : 'Drop some files above to get started.')})));
     return;
   }
-  if (view === 'grid') {
-    root.replaceChildren(h('div',{class:'grid'}, list.map((f,i) => {
-      const k = kindOf(f), sel = selected.has(f.id), th = thumb(f);
-      return h('div',{class:'card k-'+k+(sel?' sel':'')+(th.tagName==='IMG'?'':' ni'), 'data-id':f.id, onclick:()=> PHONE.matches && selected.size ? toggleSel(f.id) : openViewer(list,i)},
-        h('div',{class:'thumb'}, th),
-        extOf(f.name) ? h('span',{class:'ext',text:extOf(f.name).slice(0,5)}) : null,
-        h('div',{class:'pick',onclick:e=>toggleSel(f.id,e)}, ic('check')),
-        h('div',{class:'meta'}, h('div',{class:'name',title:f.name,text:f.name}),
-          h('div',{class:'sub',text:fmtBytes(f.size)+' · '+fmtWhen(f.created)})));
-    })));
-  } else {
+  const key = [view, filter, srcMode, sortBy, query].join('|');
+  if (key !== shownKey) { shownKey = key; shownN = CHUNK; } // a new view of the list starts from the top again
+  if (!HAS_IO) shownN = list.length;                        // very old browser: build everything, no fade
+  const fade = HAS_IO && !REDUCE;
+  root.classList.toggle('fx', fade);
+  if (fade) fadeIO = new IntersectionObserver(es => { for (const e of es) e.target.classList.toggle('in', e.isIntersecting); },
+    {rootMargin:'-24px 0px -24px 0px'});
+  let box;
+  if (view === 'grid') box = h('div',{class:'grid'});
+  else {
     const allSel = list.every(f => selected.has(f.id));
     const head = h('div',{class:'row head'},
       h('div',{class:'pick',title:'Select all',onclick:()=>{ list.forEach(f => allSel ? selected.delete(f.id) : selected.add(f.id)); render(); }}, ic('check')),
       h('div',{text:'Name'}), h('div',{class:'c',text:'Size'}), h('div',{class:'c type',text:'Type'}),
       h('div',{class:'c when',text:'Uploaded'}), h('div'));
     if (allSel) head.classList.add('sel');
-    root.replaceChildren(h('div',{class:'list'}, head, list.map((f,i) => {
-      const k = kindOf(f), sel = selected.has(f.id);
-      return h('div',{class:'row k-'+k+(sel?' sel':''), 'data-id':f.id, onclick:()=> PHONE.matches && selected.size ? toggleSel(f.id) : openViewer(list,i)},
-        h('div',{class:'pick',onclick:e=>toggleSel(f.id,e)}, ic('check')),
-        h('div',{class:'nm'}, h('div',{class:'tile'}, ic(k)),
-          h('div',{class:'nmt'}, h('div',{class:'name',title:f.name,text:f.name}), h('div',{class:'sub m',text:fmtBytes(f.size)+' · '+fmtWhen(f.created)}))),
-        h('div',{class:'c',text:fmtBytes(f.size)}),
-        h('div',{class:'c type',text:(extOf(f.name)||'file').toUpperCase()}),
-        h('div',{class:'c when',title:fmtFull(f.created),text:fmtWhen(f.created)}),
-        h('div',{class:'acts'},
-          h('button',{class:'btn ghost icon sm',title:'Download',onclick:e=>{ e.stopPropagation(); download(f); }}, ic('download')),
-          h('button',{class:'btn ghost icon sm',title:'Delete',onclick:e=>{ e.stopPropagation(); removeFiles([f]); }}, ic('trash'))));
-    })));
+    box = h('div',{class:'list'}, head);
+  }
+  let at = 0;
+  const fill = n => {
+    const end = Math.min(list.length, n), nodes = [];
+    for (; at < end; at++) nodes.push(buildItem(list[at], at, list));
+    box.append(...nodes);
+    if (fadeIO) nodes.forEach(x => fadeIO.observe(x));
+  };
+  fill(shownN);
+  root.replaceChildren(box);
+  if (HAS_IO && at < list.length) {
+    const end = h('div',{class:'sentinel'});
+    root.append(end);
+    moreIO = new IntersectionObserver(es => {
+      if (!es[0].isIntersecting) return;
+      shownN = Math.min(list.length, at + CHUNK); fill(shownN);
+      if (at >= list.length) { moreIO.disconnect(); end.remove(); }
+      else { moreIO.unobserve(end); moreIO.observe(end); } // still near the end (tall screen): check again
+    }, {rootMargin:'900px 0px'});
+    moreIO.observe(end);
   }
 }
 
