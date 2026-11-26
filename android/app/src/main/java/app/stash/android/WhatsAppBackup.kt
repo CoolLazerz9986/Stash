@@ -285,6 +285,7 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
 
         // ---- media pass: only files that belong to a message in the database just decrypted ----
         val st = MediaStats()
+        st.days = inputData.getInt("mediaDays", DEFAULT_MEDIA_DAYS).coerceIn(1, 365) // default: only the last day
         val abort = backupMedia(base, session.maxBytes, tmp, st)
         if (abort != null) return abort
         // a run with failed files is not marked done, so the next run tries those files again (finished ones are skipped)
@@ -305,10 +306,12 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         var failed = 0
         var note = ""
         var last = ""
+        var days = DEFAULT_MEDIA_DAYS
 
         fun summary(): String {
+            val win = if (days == 1) "the last day" else "the last $days days"
             if (note.isNotEmpty()) return ". Media: $note"
-            if (total == 0) return ". Media: none linked to messages"
+            if (total == 0) return ". Media: none linked to messages from $win"
             val p = ArrayList<String>()
             if (uploaded > 0) p.add("$uploaded uploaded")
             if (present > 0) p.add("$present already on the server")
@@ -317,7 +320,7 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             if (tooBig > 0) p.add("$tooBig too big for the server limit")
             if (mismatch > 0) p.add("$mismatch differ from what WhatsApp recorded (skipped)")
             if (failed > 0) p.add("$failed failed (will retry)")
-            return ". Media: " + (if (p.isEmpty()) "nothing new" else p.joinToString(", ")) + (if (last.isNotEmpty()) ". Last problem: $last" else "")
+            return ". Media from $win: " + (if (p.isEmpty()) "nothing new" else p.joinToString(", ")) + (if (last.isNotEmpty()) ". Last problem: $last" else "")
         }
     }
 
@@ -400,12 +403,13 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             }
             val sizeCol = if ("file_size" in cols) "mm.file_size" else "0"
             progress("Checking WhatsApp media…")
-            // only media of real chat messages (status updates are not chats)
+            // only media of real chat messages (status updates are not chats), sent within the chosen window (message.timestamp is in ms)
+            val cutoff = (System.currentTimeMillis() - st.days * 86_400_000L).toString()
             val sql = "SELECT DISTINCT mm.file_path, mm.file_hash, $sizeCol FROM message_media mm " +
                 "JOIN message m ON m._id = mm.message_row_id JOIN chat c ON c._id = m.chat_row_id " +
                 "JOIN jid j ON j._id = c.jid_row_id " +
-                "WHERE mm.file_path IS NOT NULL AND mm.file_hash IS NOT NULL AND j.raw_string NOT LIKE 'status@%'"
-            wa.rawQuery(sql, null).use { cur ->
+                "WHERE mm.file_path IS NOT NULL AND mm.file_hash IS NOT NULL AND j.raw_string NOT LIKE 'status@%' AND m.timestamp >= CAST(? AS INTEGER)"
+            wa.rawQuery(sql, arrayOf(cutoff)).use { cur ->
                 while (cur.moveToNext()) {
                     if (isStopped) return Result.retry()
                     st.total++
@@ -487,6 +491,7 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
     // ---- status + notifications (same channels as BackupWorker) ----
 
     private suspend fun progress(text: String) {
+        if (isStopped) return
         prefs.chatStatus = text
         try {
             setForeground(foregroundInfo(text))
@@ -498,6 +503,7 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
     }
 
     private fun tick(text: String) {
+        if (isStopped) return // a stopped run must not overwrite the "Stopped" status
         val now = System.currentTimeMillis()
         if (now - lastTick < 1000) return
         lastTick = now
@@ -541,6 +547,8 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
 
     companion object {
         private val RUNNING = AtomicBoolean(false)
+        /** Media of chat messages from the last this many days is backed up unless a run asks for more (max 365). */
+        const val DEFAULT_MEDIA_DAYS = 1
         private const val CH_PROGRESS = "backup_progress"
         private const val CH_ALERT = "backup_alerts"
         private const val NOTIF_PROGRESS = 43

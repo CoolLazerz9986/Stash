@@ -91,7 +91,7 @@ object BackupScheduler {
      * WhatsApp chats: every 6 hours. A run that finds the same WhatsApp backup file as last time ends after one
      * folder listing and one tiny request, so this is cheap. Uses the same Wi-Fi / charging rules as the photo backup.
      */
-    fun applyChat(ctx: Context) {
+    fun applyChat(ctx: Context, delayFirstRun: Boolean = false) {
         val p = Prefs(ctx)
         val wm = WorkManager.getInstance(ctx)
         if (!p.chatEnabled) {
@@ -101,6 +101,7 @@ object BackupScheduler {
         }
         val request = PeriodicWorkRequestBuilder<ChatBackupWorker>(6, TimeUnit.HOURS)
             .setConstraints(constraints(p, p.chargingOnly))
+            .apply { if (delayFirstRun) setInitialDelay(6, TimeUnit.HOURS) } // after a stop: not again straight away
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.MINUTES)
             .build()
         wm.enqueueUniquePeriodicWork(CHAT_PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
@@ -108,13 +109,24 @@ object BackupScheduler {
     }
 
     /** "Back up chats now". [force] = decrypt and compare again even if the WhatsApp file looks unchanged. */
-    fun runChatNow(ctx: Context, force: Boolean) {
+    fun runChatNow(ctx: Context, force: Boolean, mediaDays: Int = ChatBackupWorker.DEFAULT_MEDIA_DAYS) {
         val p = Prefs(ctx)
         val request = OneTimeWorkRequestBuilder<ChatBackupWorker>()
             .setConstraints(constraints(p, false))
-            .setInputData(Data.Builder().putBoolean("force", force).build())
+            .setInputData(Data.Builder().putBoolean("force", force).putInt("mediaDays", mediaDays).build())
             .build()
         WorkManager.getInstance(ctx).enqueueUniqueWork(CHAT_NOW, ExistingWorkPolicy.KEEP, request)
         noteWifiWait(ctx, photos = false, force = true)
+    }
+
+    /**
+     * Stops a chat backup that is running or queued, and only that: files already uploaded stay on the server and nothing
+     * is deleted anywhere. Chat backup stays switched on; the 6-hourly job comes back with its first run 6 hours later.
+     */
+    fun stopChat(ctx: Context) {
+        val wm = WorkManager.getInstance(ctx)
+        wm.cancelUniqueWork(CHAT_NOW)
+        wm.cancelUniqueWork(CHAT_PERIODIC)
+        applyChat(ctx, delayFirstRun = true)
     }
 }

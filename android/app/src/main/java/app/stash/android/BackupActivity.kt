@@ -134,6 +134,8 @@ class BackupActivity : ComponentActivity() {
             chatSwitch,
             chatStatusText,
             Ui.button(this, "Back up chats now", Ui.Kind.PRIMARY) { chatNow() },
+            Ui.button(this, "Back up older media…") { olderMedia() },
+            Ui.button(this, "Stop") { stopChat() },
             Ui.button(this, "Open chats") {
                 startActivity(
                     Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_PATH, "/chats")
@@ -361,6 +363,35 @@ class BackupActivity : ComponentActivity() {
         }
         BackupScheduler.runChatNow(this, true)
         queued("Chat backup")
+    }
+
+    /** Chat backup normally takes the media of the last day only. This takes the media of older messages too. */
+    private fun olderMedia() {
+        if (!prefs.chatEnabled) {
+            toast("Switch chat backup on first")
+            return
+        }
+        val labels = arrayOf("Last week", "Last month", "Last 3 months", "Last 6 months", "Last year")
+        val days = intArrayOf(7, 30, 90, 180, 365)
+        var pick = 0
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Back up media from")
+            .setSingleChoiceItems(labels, 0) { _, which -> pick = which }
+            .setPositiveButton("Back up") { _, _ ->
+                BackupScheduler.runChatNow(this, true, days[pick])
+                queued("Chat backup")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+        Ui.styleDialog(dialog)
+    }
+
+    /** Just stops. Whatever was already uploaded stays on the server; deleting is done from the file list. */
+    private fun stopChat() {
+        BackupScheduler.stopChat(this)
+        prefs.chatStatus = "Stopped. Files already uploaded are kept."
+        refresh()
+        toast("Stopped. Nothing was deleted.")
     }
 
     private fun chooseFolders() {
