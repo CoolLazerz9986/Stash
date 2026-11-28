@@ -40,6 +40,11 @@
         <activity android:name=".SetupActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".BackupActivity" android:exported="false" android:theme="@style/Theme.Stash.Slide" />
 
+        <service
+            android:name=".DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- WorkManager runs long backups as a data-sync foreground service -->
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

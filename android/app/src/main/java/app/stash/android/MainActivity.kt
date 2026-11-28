@@ -29,6 +29,7 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -102,6 +103,11 @@ class MainActivity : ComponentActivity() {
             moving = false
             layers.lastOrNull()?.let { slideTop(it, true, 220L) } // spring back
         }
+    }
+
+    /** While this screen shows, download results appear here as toasts instead of notifications. */
+    private val showEvent: (Events.Msg) -> Unit = { m ->
+        if (m.kind != Events.Kind.PROGRESS) Toast.makeText(this, m.text, Toast.LENGTH_LONG).show()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -497,6 +503,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onResume() {
+        Events.listen(showEvent)
         super.onResume()
         if (!::web.isInitialized) return
         val url = prefs.serverUrl
@@ -511,6 +518,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        Events.unlisten(showEvent)
         if (::web.isInitialized) CookieManager.getInstance().flush() // keep the 30-day login across restarts
         super.onPause()
     }
