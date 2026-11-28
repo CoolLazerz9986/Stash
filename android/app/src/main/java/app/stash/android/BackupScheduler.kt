@@ -84,13 +84,20 @@ object BackupScheduler {
         now.any { !it.state.isFinished } ||
             periodic.any { it.state == WorkInfo.State.RUNNING || (it.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0) }
 
-    fun watchRuns(ctx: Context, owner: LifecycleOwner, onChange: (Boolean) -> Unit) {
+    fun watchRuns(ctx: Context, owner: LifecycleOwner, onChange: (Boolean) -> Unit) =
+        watch(ctx, owner, NOW, PERIODIC, onChange)
+
+    private fun watch(ctx: Context, owner: LifecycleOwner, nowName: String, periodicName: String, onChange: (Boolean) -> Unit) {
         val wm = WorkManager.getInstance(ctx)
         var now: List<WorkInfo> = emptyList()
         var periodic: List<WorkInfo> = emptyList()
-        wm.getWorkInfosForUniqueWorkLiveData(NOW).observe(owner) { now = it; onChange(isBusy(now, periodic)) }
-        wm.getWorkInfosForUniqueWorkLiveData(PERIODIC).observe(owner) { periodic = it; onChange(isBusy(now, periodic)) }
+        wm.getWorkInfosForUniqueWorkLiveData(nowName).observe(owner) { now = it; onChange(isBusy(now, periodic)) }
+        wm.getWorkInfosForUniqueWorkLiveData(periodicName).observe(owner) { periodic = it; onChange(isBusy(now, periodic)) }
     }
+
+    /** Same as [watchRuns], for the chat backup. */
+    fun watchChatRuns(ctx: Context, owner: LifecycleOwner, onChange: (Boolean) -> Unit) =
+        watch(ctx, owner, CHAT_NOW, CHAT_PERIODIC, onChange)
 
     /** Stops the phone backup that is running or queued. A schedule, if one is on, is queued again. */
     fun cancelRun(ctx: Context) {

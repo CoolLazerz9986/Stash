@@ -35,6 +35,9 @@ class BackupActivity : ComponentActivity() {
     private lateinit var cancelButton: android.widget.Button
     private var busy = false // a phone backup is running or queued
     private var connecting = false
+    private lateinit var chatBackupButton: android.widget.Button
+    private lateinit var chatCancelButton: android.widget.Button
+    private var chatBusy = false // a chat backup is running or queued
     private lateinit var chatSwitch: Switch
     private lateinit var chatKeyField: EditText
     private lateinit var chatFolderButton: android.widget.Button
@@ -128,6 +131,8 @@ class BackupActivity : ComponentActivity() {
         }
         chatFolderButton = Ui.button(this, "") { folderPicker.launch(WaSource.pickerStart()) }
         chatStatusText = Ui.body(this)
+        chatBackupButton = Ui.button(this, "Back up chats now", Ui.Kind.PRIMARY) { chatNow() }
+        chatCancelButton = Ui.button(this, "Cancel backup", Ui.Kind.DANGER) { stopChat() }
         val chatCard = Ui.card(
             this,
             Ui.body(this, "WhatsApp chats").apply { setTypeface(typeface, android.graphics.Typeface.BOLD) },
@@ -142,9 +147,9 @@ class BackupActivity : ComponentActivity() {
             chatFolderButton,
             chatSwitch,
             chatStatusText,
-            Ui.button(this, "Back up chats now", Ui.Kind.PRIMARY) { chatNow() },
+            chatBackupButton,
+            chatCancelButton,
             Ui.button(this, "Back up older media…") { olderMedia() },
-            Ui.button(this, "Stop") { stopChat() },
             Ui.button(this, "Open chats") {
                 startActivity(
                     Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_PATH, "/chats")
@@ -164,6 +169,10 @@ class BackupActivity : ComponentActivity() {
         )
         BackupScheduler.watchRuns(this, this) { running ->
             busy = running
+            refresh()
+        }
+        BackupScheduler.watchChatRuns(this, this) { running ->
+            chatBusy = running
             refresh()
         }
     }
@@ -236,6 +245,8 @@ class BackupActivity : ComponentActivity() {
         cancelButton.visibility = if (busy) android.view.View.VISIBLE else android.view.View.GONE
         backupButton.isEnabled = !connecting
         scheduleButton.isEnabled = !connecting
+        chatBackupButton.visibility = if (chatBusy) android.view.View.GONE else android.view.View.VISIBLE
+        chatCancelButton.visibility = if (chatBusy) android.view.View.VISIBLE else android.view.View.GONE
         statusText.text = buildString {
             append("Status: ").append(prefs.status.ifEmpty { if (prefs.backupEnabled) "Waiting for the next run" else "Off" })
             if (prefs.lastRun > 0) append("\nLast finished: ").append(DateFormat.getDateTimeInstance().format(Date(prefs.lastRun)))
@@ -463,12 +474,12 @@ class BackupActivity : ComponentActivity() {
         Ui.styleDialog(dialog)
     }
 
-    /** Just stops. Whatever was already uploaded stays on the server; deleting is done from the file list. */
+    /** The chat Cancel button. Just stops. Whatever was already uploaded stays on the server; deleting is done from the file list. */
     private fun stopChat() {
         BackupScheduler.stopChat(this)
-        prefs.chatStatus = "Stopped. Files already uploaded are kept."
+        prefs.chatStatus = "Cancelled. Uploaded files are kept."
         refresh()
-        toast("Stopped. Nothing was deleted.")
+        toast("Cancelled. Nothing was deleted.")
     }
 
     /** "primary:Documents/Work" -> "Work" */
