@@ -1,3 +1,4 @@
+// Path: android/app/src/main/java/app/stash/android/Prefs.kt
 package app.stash.android
 
 import android.content.Context
@@ -60,6 +61,35 @@ class Prefs(ctx: Context) {
     var status: String
         get() = sp.getString("status", "") ?: ""
         set(v) = sp.edit().putString("status", v).apply()
+
+    // ---- WhatsApp chat backup (ChatBackupWorker). Own switch, own status; shares serverUrl and apiKey. ----
+
+    var chatEnabled: Boolean
+        get() = sp.getBoolean("chatEnabled", false)
+        set(v) = sp.edit().putBoolean("chatEnabled", v).apply()
+
+    /** The 64-digit WhatsApp backup key as the user typed it. Stays in the app's private storage (allowBackup=false). */
+    var chatKey: String
+        get() = sp.getString("chatKey", "") ?: ""
+        set(v) = sp.edit().putString("chatKey", v).apply()
+
+    /** Folder the user picked with the system folder picker (a persisted content:// tree URI). Empty = not chosen. */
+    var chatTree: String
+        get() = sp.getString("chatTree", "") ?: ""
+        set(v) = sp.edit().putString("chatTree", v).apply()
+
+    /** "server|file name|size|modified" of the last WhatsApp backup file that reached the server. */
+    var chatDone: String
+        get() = sp.getString("chatDone", "") ?: ""
+        set(v) = sp.edit().putString("chatDone", v).apply()
+
+    var chatLastRun: Long
+        get() = sp.getLong("chatLastRun", 0L)
+        set(v) = sp.edit().putLong("chatLastRun", v).apply()
+
+    var chatStatus: String
+        get() = sp.getString("chatStatus", "") ?: ""
+        set(v) = sp.edit().putString("chatStatus", v).apply()
 
     fun listen(l: SharedPreferences.OnSharedPreferenceChangeListener) = sp.registerOnSharedPreferenceChangeListener(l)
     fun unlisten(l: SharedPreferences.OnSharedPreferenceChangeListener) = sp.unregisterOnSharedPreferenceChangeListener(l)

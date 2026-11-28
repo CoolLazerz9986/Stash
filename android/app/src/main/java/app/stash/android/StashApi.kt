@@ -1,3 +1,4 @@
+// Path: android/app/src/main/java/app/stash/android/StashApi.kt
 package app.stash.android
 
 import org.json.JSONException
@@ -19,6 +20,9 @@ object StashApi {
     class ApiException(val status: Int, message: String) : IOException(message)
 
     data class Session(val authRequired: Boolean, val authed: Boolean, val maxBytes: Long, val api: Int)
+
+    /** [sha256] = SHA-256 of the newest chat database the server holds ("" if none), [maxBytes] = its chat size limit. */
+    data class ChatStatus(val sha256: String, val maxBytes: Long)
 
     private fun conn(
         url: String,
@@ -89,6 +93,23 @@ object StashApi {
     }
 
     /** Does the server already hold a file with this SHA-256? */
+    /**
+     * PUT /api/files/by-hash/<sha256>/thumb: stores a small JPEG preview for the file with that SHA-256. Best effort: the caller
+     * ignores every failure, because a missing preview only means the website loads the original once.
+     */
+    fun putThumb(base: String, key: String, sha256: String, jpeg: ByteArray) {
+        val c = conn("$base/api/files/by-hash/$sha256/thumb", "PUT", auth(key) + ("Content-Type" to "image/jpeg"))
+        try {
+            c.doOutput = true
+            c.setFixedLengthStreamingMode(jpeg.size)
+            c.outputStream.use { it.write(jpeg) }
+            val code = c.responseCode
+            if (code != 201) throw ApiException(code, errorText(bodyOf(c), "HTTP $code"))
+        } finally {
+            c.disconnect()
+        }
+    }
+
     fun exists(base: String, key: String, sha256: String): Boolean {
         val c = conn("$base/api/files/by-hash/$sha256", "GET", auth(key))
         try {
@@ -101,9 +122,27 @@ object StashApi {
         }
     }
 
+    /** GET /api/chats/status: what chat database the server holds now, and its size limit. 404 = server too old for chats. */
+    fun chatStatus(base: String, key: String): ChatStatus {
+        val c = conn("$base/api/chats/status", "GET", auth(key))
+        try {
+            val code = c.responseCode
+            val body = bodyOf(c)
+            if (code == 404) throw ApiException(404, "This server is too old for chat backup: update server.py, chats.py and chats.html")
+            if (code != 200) throw ApiException(code, errorText(body, "HTTP $code"))
+            val j = try { JSONObject(body) } catch (e: JSONException) { throw ApiException(0, "Bad response from server") }
+            return ChatStatus(j.optJSONObject("snapshot")?.optString("sha256") ?: "", j.optLong("maxBytes"))
+        } finally {
+            c.disconnect()
+        }
+    }
+
     /**
-     * Streams one file to POST /api/upload. [length] and [sha256] must describe exactly the bytes [open] yields;
-     * the server re-hashes the upload and rejects it (422) if they differ, so a corrupted backup can't be stored.
+     * Streams one file to POST [path] (default /api/upload; the chat backup uses /api/chats/import).
+     * [length] and [sha256] must describe exactly the bytes [open] yields; the server re-hashes the upload
+     * and rejects it (422) if they differ, so a corrupted backup can't be stored.
+     * [readTimeoutMs]: how long to wait for the server's answer after the last byte (the chat import indexes first).
+     * [source]: optional X-Source tag stored with the file ("whatsapp" for chat media); empty = untagged.
      */
     fun upload(
         base: String,
@@ -115,12 +154,16 @@ object StashApi {
         open: () -> InputStream,
         onProgress: (Long) -> Unit,
         cancelled: () -> Boolean,
+        path: String = "/api/upload",
+        readTimeoutMs: Int = 120_000,
+        source: String = "",
     ) {
         val headers = HashMap<String, String>(auth(key))
         headers["X-Filename"] = URLEncoder.encode(name, "UTF-8").replace("+", "%20")
         headers["Content-Type"] = mime.ifEmpty { "application/octet-stream" }
         headers["X-Sha256"] = sha256
-        val c = conn("$base/api/upload", "POST", headers, readTimeoutMs = 120_000)
+        if (source.isNotEmpty()) headers["X-Source"] = source
+        val c = conn("$base$path", "POST", headers, readTimeoutMs = readTimeoutMs)
         c.doOutput = true
         c.setFixedLengthStreamingMode(length)
         try {

@@ -2,7 +2,7 @@
 
 Read this first. Everything here is already settled, so don't ask about it.
 
-**Also read:** `rules.md` (code rules) · `Tasks.md` (what's next) · the changelog (what changed) · `API.md` (the server contract) · `TESTING.md`
+**Also read:** `RULES.md` (code rules) · `TASKS.md` (what's next) · `CHANGELOG.md` (what changed) · `API.md` (the server contract) · `TESTING.md`
 
 ---
 
@@ -10,7 +10,7 @@ Read this first. Everything here is already settled, so don't ask about it.
 
 A self-hosted server + website + Android app, built for a lightweight machine.
 
-**Stage:** alpha. It reaches full release when the fundamentals and the headline features are done. Anything beyond that is optional QoL.
+**Stage:** v1. The fundamentals and the headline feature are implemented for v1; remaining bugs, polish, and anything beyond that are tracked in `TASKS.md` (or optional QoL).
 
 - **Fundamentals:** a working UI (website + server) that passes data to the backend, a password or API key to connect, and a view of what's stored.
 - **Headline feature:** back up chats and display them in a WhatsApp/Telegram-style UI.
@@ -47,7 +47,7 @@ Anything else gets added here when something breaks.
 
 ## 6. Code rules
 
-See `rules.md`. Don't repeat them here.
+See `RULES.md`. Don't repeat them here.
 
 ## 7. Limits
 
@@ -60,7 +60,7 @@ Max upload size is configurable via `STASH_MAX_MB`. Default: **10 MB**.
 
 ## 9. Status and next steps
 
-`Tasks.md` for what's next, the changelog for what's done.
+`TASKS.md` for what's next, `CHANGELOG.md` for what's done.
 
 ## 10. Access
 

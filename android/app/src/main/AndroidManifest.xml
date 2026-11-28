@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Path: android/app/src/main/AndroidManifest.xml -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
@@ -23,9 +24,11 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.Stash">
 
+        <!-- enableOnBackInvokedCallback: on Android 14+ the system Back gesture reports its progress, so a page follows the finger -->
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:enableOnBackInvokedCallback="true"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -35,7 +38,7 @@
         </activity>
 
         <activity android:name=".SetupActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".BackupActivity" android:exported="false" />
+        <activity android:name=".BackupActivity" android:exported="false" android:theme="@style/Theme.Stash.Slide" />
 
         <!-- WorkManager runs long backups as a data-sync foreground service -->
         <service

@@ -1,0 +1,482 @@
+<!doctype html>
+<!-- Path: chats.html -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stash chats</title>
+<script>
+/* Runs before the first paint: theme (no light flash), and "did we arrive by a slide?" (then no splash, slide in instead). */
+(function () {
+  var d = document.documentElement;
+  try { d.dataset.theme = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); } catch (e) {}
+  if (window.StashApp && window.StashApp.closePage) { // Android app: the app slides this page in itself
+    d.classList.add('nosplash');
+    if (/[?&]c=/.test(location.search)) d.classList.add('solo'); // one chat only, opened over the list by the app
+  }
+  try {
+    var n = sessionStorage.getItem('stash-nav'); sessionStorage.removeItem('stash-nav');
+    if (n === 'fwd' || n === 'back') { d.classList.add('nosplash', 'enter-' + n); setTimeout(function () { d.classList.remove('enter-' + n); }, 700); }
+  } catch (e) {}
+})();
+</script>
+<style>
+/* Same colour variables as index.html. Buttons share the website's press feedback (they sink a little when tapped). */
+:root{--bg:#f5f6f9;--panel:#fff;--ink:#14171f;--muted:#6a7384;--line:#e4e7ee;--accent:#5b5bf0;--accent-ink:#fff;--accent-soft:#ececfe;--me:#e3e3ff;--them:#fff;--danger:#e5484d}
+[data-theme=dark]{--bg:#0d0f14;--panel:#161920;--ink:#e8ebf2;--muted:#8a92a5;--line:#262a35;--accent:#8080ff;--accent-ink:#0d0f14;--accent-soft:#23254d;--me:#2a2c5c;--them:#1d2029}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{background:var(--bg)}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;overflow-x:hidden}
+button,input{font:inherit;color:inherit}
+svg.i{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* ---- loading: splash (first open), thin busy bar (any request), spinner (waiting for content) ---- */
+@keyframes show{from{opacity:0}to{opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes busy{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
+@keyframes spIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:none}}
+@keyframes spPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+#splash{position:fixed;inset:0;z-index:100;display:grid;place-items:center;align-content:center;gap:18px;background:var(--bg);transition:opacity .4s ease}
+#splash.out{opacity:0;pointer-events:none}
+.nosplash #splash{display:none}
+.sp-logo{width:64px;height:64px;display:grid;place-items:center;border-radius:18px;color:var(--accent-ink);background:var(--accent);animation:spIn .45s ease both,spPulse 1.6s ease-in-out .45s infinite}
+.sp-logo svg{width:34px;height:34px}
+.sp-bar{width:120px;height:3px;border-radius:3px;background:var(--line);overflow:hidden;position:relative;animation:show .45s ease both}
+.sp-bar i,#busy i{position:absolute;top:0;bottom:0;left:0;width:40%;background:var(--accent);border-radius:3px;animation:busy 1.1s ease-in-out infinite}
+#busy{position:fixed;left:0;right:0;top:0;height:3px;z-index:95;overflow:hidden;opacity:0;transition:opacity .3s;pointer-events:none}
+#busy.on{opacity:1}
+.loading{display:grid;place-items:center;padding:40px;opacity:0;animation:show .3s .15s both}
+.loading i{width:26px;height:26px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--accent);animation:spin .8s linear infinite}
+#msgs.fadein{animation:show .25s}
+
+/* ---- slide transitions between pages (the page wrapper moves; see the script) ---- */
+#page{flex:1;display:flex;flex-direction:column;min-height:0}
+@keyframes inLeft{from{transform:translateX(-24%)}to{transform:none}}
+@keyframes inRight{from{transform:translateX(100%)}to{transform:none}}
+@keyframes outRight{to{transform:translateX(100%)}}
+@keyframes outLeft{to{transform:translateX(-24%)}}
+@keyframes paneIn{from{transform:translateX(100%)}to{transform:none}}
+.enter-back #page{animation:inLeft .26s cubic-bezier(.2,.8,.2,1)}
+.enter-fwd #page{animation:inRight .26s cubic-bezier(.2,.8,.2,1)}
+.leave-back #page{animation:outRight .2s ease-in forwards}
+.leave-fwd #page{animation:outLeft .2s ease-in forwards}
+/* only transform is animated (no opacity: a faded full-screen layer is costly on a weak GPU), and the layer is promoted up front */
+.enter-fwd #page,.enter-back #page,.leave-fwd #page,.leave-back #page{will-change:transform}
+
+/* buttons: same look and press feel as index.html */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid transparent;background:transparent;padding:8px;border-radius:10px;cursor:pointer;color:inherit;text-decoration:none;touch-action:manipulation;transition:transform .08s,filter .08s,background .15s,border-color .15s}
+.btn:hover{background:color-mix(in srgb,var(--ink) 7%,transparent)}
+.btn:active{transform:scale(.92);background:color-mix(in srgb,var(--ink) 12%,transparent)}
+.btn:focus-visible,.chat:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.btn.pill{border-color:var(--line);background:var(--panel);padding:6px 14px;border-radius:999px;font-size:13.5px}
+.btn.pill:hover{border-color:color-mix(in srgb,var(--ink) 25%,var(--line))}
+.btn.pill:active{transform:scale(.95)}
+
+header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+header b{font-size:17px;white-space:nowrap}
+header small{color:var(--muted);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+#app{flex:1;display:flex;min-height:0;position:relative}
+#list{width:340px;max-width:100%;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.sbox{position:relative;margin:10px}
+.sbox svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+.sbox input{width:100%;padding:8px 12px 8px 36px;border:1px solid var(--line);border-radius:999px;background:var(--bg);outline:none}
+.sbox input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+#rows{overflow:auto;flex:1}
+.chat{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;padding:10px 14px;cursor:pointer;touch-action:manipulation;transition:transform .08s,background .15s}
+.chat:hover,.chat.on{background:var(--bg)}
+.chat:active{transform:scale(.98);background:color-mix(in srgb,var(--ink) 9%,transparent)}
+.chat .top{display:flex;gap:8px}
+.chat .nm{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat .tm,.chat .pv{color:var(--muted);font-size:13px}
+.chat .tm{flex:none;white-space:nowrap}
+.chat .pv{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+#pane{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+/* the title bar and the in-chat search only make sense once a chat is open */
+#bar,#qrow{display:none}
+body.has-chat #bar{display:flex}
+body.has-chat #qrow{display:block}
+#bar{align-items:center;gap:8px;padding:8px 12px;background:var(--panel)}
+#bar b{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#qrow{padding:0 12px 10px;background:var(--panel);border-bottom:1px solid var(--line)}
+#qrow .sbox{margin:0}
+#msgs{flex:1;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:4px}
+/* messages fade in as they scroll into view and out as they leave (class .fx is only set without reduced motion) */
+#msgs.fx .m,#msgs.fx .day{transition:opacity .2s ease}
+#msgs.fx .m:not(.in),#msgs.fx .day:not(.in){opacity:0}
+.day{align-self:center;background:var(--panel);border:1px solid var(--line);color:var(--muted);font-size:12.5px;border-radius:999px;padding:2px 12px;margin:8px 0}
+.m{max-width:min(75%,620px);padding:6px 10px;border-radius:12px;background:var(--them);border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+.m.me{align-self:flex-end;background:var(--me)}
+.m .who{font-size:12.5px;font-weight:600;color:var(--accent)}
+.m .lab{color:var(--muted);font-style:italic}
+.m .t{display:block;text-align:right;color:var(--muted);font-size:11.5px}
+/* media inside a message: the picture / player / file link linked to it on the server */
+.m .med{white-space:normal;margin:2px 0 4px}
+.m .med img,.m .med video{display:block;max-width:100%;max-height:320px;border-radius:8px;background:var(--bg)}
+.m .med img{min-width:120px;min-height:80px;object-fit:contain}
+.m .med video{width:min(320px,100%)}
+.m .med audio{display:block;width:min(280px,100%)}
+.m .med .lab{font-size:12.5px;margin-top:3px}
+.m .med a.doc{display:flex;gap:8px;align-items:center;color:var(--accent);font-weight:600;text-decoration:none;word-break:break-all}
+.m .med a.doc small{color:var(--muted);font-weight:400;white-space:nowrap}
+.more{align-self:center;margin:4px 0}
+.empty{margin:auto;color:var(--muted);text-align:center;padding:30px}
+#back{display:none}
+@media (max-width:760px){
+  #list{width:100%}
+  #pane{display:none}
+  body.open #list{display:none}
+  body.open #pane{display:flex;animation:paneIn .26s cubic-bezier(.2,.8,.2,1)}
+  #back{display:inline-flex}
+  /* "peek": while a chat slides in or out, the chat list stays visible underneath it */
+  body.peek #list{display:flex}
+  body.peek #pane{position:absolute;inset:0;z-index:2;background:var(--bg);box-shadow:-10px 0 24px rgba(0,0,0,.16)}
+  .m{max-width:88%}
+}
+/* the app opened this page for one chat only (no list): show just the chat, at any width */
+.solo #list{display:none!important}
+.solo #pane{display:flex!important;animation:none!important}
+.solo #back{display:inline-flex}
+@media (prefers-reduced-motion:reduce){
+  .btn:active,.chat:active{transform:none}
+  .sp-logo{animation:none}
+  .enter-fwd #page,.enter-back #page,body.open #pane{animation:none}
+}
+</style>
+</head>
+<body>
+<div id="splash" aria-hidden="true">
+  <div class="sp-logo"><svg class="i" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/><path d="M3.3 7L12 12l8.7-5"/><path d="M12 22V12"/></svg></div>
+  <div class="sp-bar"><i></i></div>
+</div>
+<div id="busy" aria-hidden="true"><i></i></div>
+<div id="page">
+<header>
+  <a class="btn" id="home" href="/" title="Back to files" aria-label="Back to files"><svg class="i" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></a>
+  <b>WhatsApp chats</b><small id="info"></small>
+</header>
+<div id="app">
+  <section id="list">
+    <div class="sbox"><svg class="i" viewBox="0 0 24 24"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z"/><path d="M21 21l-4.3-4.3"/></svg><input id="filter" type="search" placeholder="Search chats" autocomplete="off"></div>
+    <div id="rows"><div class="loading"><i></i></div></div>
+  </section>
+  <section id="pane">
+    <div id="bar">
+      <button id="back" class="btn" type="button" title="Back to chats" aria-label="Back to chats"><svg class="i" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <b id="title"></b>
+    </div>
+    <div id="qrow"><div class="sbox"><svg class="i" viewBox="0 0 24 24"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z"/><path d="M21 21l-4.3-4.3"/></svg><input id="q" type="search" placeholder="Search in this chat" autocomplete="off"></div></div>
+    <div id="msgs"><div class="empty">Pick a chat on the left.</div></div>
+  </section>
+</div>
+</div>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* Heavy work (building the chat list or 100 messages) waits until a slide has finished; run in the middle of the animation
+   it makes the slide stutter. Returns a promise to wait on, or null when there is nothing to wait for. */
+const APP = !!(window.StashApp && StashApp.closePage); // inside the Android app: it does the page slides and the leave-swipe natively
+const SOLO = document.documentElement.classList.contains('solo');
+const SLID = APP || document.documentElement.classList.contains('enter-back') || document.documentElement.classList.contains('enter-fwd');
+const afterMs = ms => REDUCE ? null : new Promise(r => setTimeout(r, ms));
+const afterSlide = () => SLID ? afterMs(280) : null;
+const narrow = () => matchMedia('(max-width:760px)').matches;
+const narrowOpen = () => narrow() && document.body.classList.contains('open');
+let chats = [], cur = null, firstId = 0, seq = 0, loadingMore = false;
+/* Fade while scrolling, and the next older page loads by itself when the "Load earlier" button comes near the top. */
+const HAS_IO = 'IntersectionObserver' in window, FX = HAS_IO && !REDUCE;
+let fadeIO = null, moreIO = null;
+function watchMsgs(box, nodes, more) {
+  box.classList.toggle('fx', FX);
+  if (FX) {
+    if (!fadeIO) fadeIO = new IntersectionObserver(es => { for (const e of es) e.target.classList.toggle('in', e.isIntersecting); },
+      { root: box, rootMargin: '-24px 0px -24px 0px' });
+    nodes.forEach(n => fadeIO.observe(n));
+  }
+  if (HAS_IO) {
+    if (moreIO) moreIO.disconnect();
+    moreIO = null;
+    if (more) { moreIO = new IntersectionObserver(es => { if (es[0].isIntersecting) load(true); }, { root: box, rootMargin: '400px 0px 0px 0px' }); moreIO.observe(more); }
+  }
+}
+let pin = false; // true while the newest messages are being shown: pictures that finish loading keep the view at the bottom
+
+/* ---------- loading indicators ---------- */
+/* Thin bar at the top while any request runs. It only appears if the wait is longer than 180 ms (no flicker) and fades out. */
+let busyN = 0, busyT = 0;
+function busy(d) {
+  busyN = Math.max(0, busyN + d);
+  const b = $('#busy');
+  if (busyN > 0) { if (!busyT && !b.classList.contains('on')) busyT = setTimeout(() => { busyT = 0; if (busyN > 0) b.classList.add('on'); }, 180); }
+  else { clearTimeout(busyT); busyT = 0; b.classList.remove('on'); }
+}
+/* The splash fades out once the first data is in (and never before 450 ms after the page started, so it does not flash). */
+function hideSplash() {
+  const s = $('#splash'); if (!s) return;
+  setTimeout(() => { s.classList.add('out'); setTimeout(() => s.remove(), 450); }, Math.max(0, 450 - performance.now()));
+}
+setTimeout(hideSplash, 8000); // safety net
+
+async function api(path) {
+  busy(1);
+  try {
+    const r = await fetch(path, {credentials: 'same-origin'});
+    if (r.status === 401) { location.href = '/'; throw new Error('login'); }
+    if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch {} throw new Error(m); }
+    return await r.json();
+  } finally { busy(-1); }
+}
+/* Intl formatters are slow to create, and these run for every message and every chat, so they are made once. */
+const DF_DAY = new Intl.DateTimeFormat(undefined, {weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'});
+const DF_TIME = new Intl.DateTimeFormat(undefined, {hour: '2-digit', minute: '2-digit'});
+const DF_WEEKDAY = new Intl.DateTimeFormat(undefined, {weekday: 'short'});
+const DF_MD = new Intl.DateTimeFormat(undefined, {month: 'short', day: 'numeric'});
+const DF_YMD = new Intl.DateTimeFormat(undefined, {year: '2-digit', month: 'short', day: 'numeric'});
+const fmtDay = ts => DF_DAY.format(new Date(ts * 1000));
+const fmtTime = ts => DF_TIME.format(new Date(ts * 1000));
+/* short date for the chat list: time today, weekday this week, otherwise a short date */
+function fmtList(ts) {
+  const d = new Date(ts * 1000), now = new Date();
+  if (d.toDateString() === now.toDateString()) return fmtTime(ts);
+  if ((now - d) / 864e5 < 7) return DF_WEEKDAY.format(d);
+  return (d.getFullYear() === now.getFullYear() ? DF_MD : DF_YMD).format(d);
+}
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  const u = ['KB', 'MB', 'GB']; let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return (n >= 100 ? n.toFixed(0) : n.toFixed(1)) + ' ' + u[i];
+}
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function spin() { const d = el('div', 'loading'); d.append(document.createElement('i')); return d; }
+
+/* ---------- media inside a message ---------- */
+/* msg.media.file = the vault file whose SHA-256 equals the one WhatsApp recorded for this message (the server matched it),
+   so a message can only ever show its own file. No file yet: show WhatsApp's small preview picture, if it has one. */
+function settle() { if (pin) { const b = $('#msgs'); b.scrollTop = b.scrollHeight; } }
+function fileLink(f) {
+  const a = el('a', 'doc', f.name || 'file'); a.href = '/api/files/' + f.id + '/download'; a.setAttribute('download', f.name || '');
+  if (f.size != null) a.append(el('small', null, fmtBytes(f.size)));
+  return a;
+}
+function mediaNode(m) {
+  const md = m.media, f = md.file, thumbUrl = md.thumb ? '/api/chats/thumb/' + m.id : '';
+  if (!f && !thumbUrl) return null; // nothing to show: the plain [Photo] label stays
+  const wrap = el('div', 'med');
+  if (f) {
+    const raw = '/api/files/' + f.id + '/raw', kind = (f.mime || md.mime || '').split('/')[0];
+    if (kind === 'image') {
+      const i = el('img'); i.loading = 'lazy'; i.alt = f.name || ''; i.src = raw; i.onload = settle;
+      i.onerror = () => i.replaceWith(fileLink(f)); // a format this browser cannot show (HEIC...): offer the download
+      wrap.append(i);
+    } else if (kind === 'video') {
+      const v = el('video'); v.controls = true; v.preload = 'metadata'; if (thumbUrl) v.poster = thumbUrl; v.src = raw; v.onloadedmetadata = settle;
+      v.onerror = () => v.replaceWith(fileLink(f));
+      wrap.append(v);
+    } else if (kind === 'audio') {
+      const a = el('audio'); a.controls = true; a.preload = 'none'; a.src = raw; a.onerror = () => a.replaceWith(fileLink(f));
+      wrap.append(a);
+    } else wrap.append(fileLink(f));
+  } else {
+    const i = el('img'); i.loading = 'lazy'; i.alt = ''; i.src = thumbUrl; i.onload = settle; i.onerror = () => i.remove();
+    wrap.append(i, el('div', 'lab', 'Preview only: the file is not on the server' + (md.name ? ' (' + md.name + ')' : '')));
+  }
+  return wrap;
+}
+
+async function boot() {
+  if (SOLO) { // opened by the app for one chat: no list to fetch
+    const q = new URLSearchParams(location.search);
+    try { await openChat({id: q.get('c'), name: q.get('n') || '', group: q.get('g') === '1'}); }
+    finally { hideSplash(); }
+    return;
+  }
+  try {
+    const wait = afterSlide();
+    const d = await api('/api/chats');
+    if (wait) await wait;
+    chats = d.chats;
+    if (!d.snapshot) { $('#rows').replaceChildren(el('div', 'empty', 'No chats yet. In the Android app: Phone backup > WhatsApp chats.')); return; }
+    $('#info').textContent = d.snapshot.messages.toLocaleString() + ' messages, backed up ' + new Date(d.snapshot.ts * 1000).toLocaleString();
+    drawList();
+  } catch (e) { if (e.message !== 'login') $('#rows').replaceChildren(el('div', 'empty', e.message)); }
+  finally { hideSplash(); }
+}
+
+function drawList() {
+  const f = $('#filter').value.trim().toLowerCase();
+  const rows = chats.filter(c => !f || c.name.toLowerCase().includes(f)).map(c => {
+    const b = el('button', 'chat' + (cur && cur.id === c.id ? ' on' : ''));
+    b.type = 'button'; b.dataset.id = c.id;
+    const top = el('div', 'top'); top.append(el('span', 'nm', c.name), el('span', 'tm', c.last ? fmtList(c.last.ts) : ''));
+    b.append(top, el('div', 'pv', c.last ? (c.last.me ? 'You: ' : '') + c.last.text : ''));
+    b.onclick = () => openChat(c);
+    return b;
+  });
+  $('#rows').replaceChildren(...(rows.length ? rows : [el('div', 'empty', 'Nothing matches.')]));
+}
+
+async function openChat(c) {
+  /* in the app a chat on a narrow screen is its own page that the app slides in (and out again with the edge swipe) */
+  if (APP && !SOLO && narrow()) { StashApp.openPage('/chats?c=' + encodeURIComponent(c.id) + '&n=' + encodeURIComponent(c.name) + (c.group ? '&g=1' : '')); return; }
+  cur = c; firstId = 0; $('#q').value = ''; $('#title').textContent = c.name;
+  const b = document.body;
+  b.classList.add('has-chat');
+  /* narrow screens: the chat slides in from the right over the list (the list stays visible during the slide) */
+  if (!SOLO && narrow() && !b.classList.contains('open') && !REDUCE) { b.classList.add('peek'); setTimeout(() => { if (!drag) b.classList.remove('peek'); }, 300); }
+  b.classList.add('open');
+  /* mark the open chat without rebuilding the whole list (hundreds of buttons) in the middle of the slide */
+  for (const e of $('#rows').children) e.classList.toggle('on', e.dataset.id === String(c.id));
+  await load(false, narrow() ? afterMs(280) : null);
+  const m = $('#msgs'); m.scrollTop = m.scrollHeight;
+}
+
+/* narrow screens show either the chat list or one chat; this goes from the chat back to the list */
+function closeChat() { document.body.classList.remove('open'); }
+
+/* ---------- leaving this page: slide to the right, then the files page slides back in from the left ---------- */
+let leaving = false;
+function resetLeave() {
+  leaving = false;
+  document.documentElement.classList.remove('leave-back');
+  const p = $('#page'); p.style.transition = p.style.transform = p.style.boxShadow = p.style.willChange = '';
+  try { sessionStorage.removeItem('stash-nav'); } catch {}
+}
+function goHome(already) { // already = the swipe has moved the page off screen
+  if (APP) { StashApp.closePage(); return; }
+  if (leaving) return;
+  leaving = true;
+  try { sessionStorage.setItem('stash-nav', 'back'); } catch {}
+  if (already || REDUCE) location.href = '/';
+  else { document.documentElement.classList.add('leave-back'); setTimeout(() => { location.href = '/'; }, 200); }
+  setTimeout(resetLeave, 2500); // if the server never answers, bring the page back
+}
+addEventListener('pageshow', e => { if (e.persisted) resetLeave(); });
+$('#home').addEventListener('click', e => { if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return; e.preventDefault(); goHome(); });
+
+/* ---------- swipe from the left edge, left to right = go back ---------- */
+/* A swipe that starts in the left 80 px drags the page (or, on a narrow screen with a chat open, the chat) after the finger.
+   Past a third of the screen, or a quick flick, it leaves; otherwise it springs back. */
+const EDGE = 80;
+let drag = null;
+function settleDrag(commit) {
+  const d = drag; drag = null;
+  if (!d || !d.on) return;
+  const el = d.el;
+  el.style.transition = 'transform .2s ease-out';
+  el.style.transform = 'translateX(' + (commit ? innerWidth : 0) + 'px)';
+  setTimeout(() => {
+    el.style.transition = '';
+    if (commit && !d.pane) { goHome(true); return; }
+    el.style.willChange = ''; // the page stays off screen until the files page loads
+    el.style.transform = el.style.boxShadow = '';
+    document.body.classList.remove('peek');
+    if (commit) closeChat();
+  }, 210);
+}
+/* the same slide for the Android Back button / back gesture while a chat is open */
+function slideCloseChat() {
+  if (REDUCE) { closeChat(); return; }
+  document.body.classList.add('peek');
+  drag = {on: true, pane: true, el: $('#pane'), dx: 0, t: 0};
+  requestAnimationFrame(() => settleDrag(true));
+}
+/* The touchmove listener is only attached while a swipe that began at the edge is tracked: a permanent non-passive
+   touchmove listener would make every scroll on this page wait for JavaScript (laggy on a slow phone). */
+function stopMove() { removeEventListener('touchmove', onMove); }
+addEventListener('touchstart', e => {
+  drag = null; stopMove();
+  if (leaving || e.touches.length !== 1) return;
+  if (APP) return; // the app's own edge swipe leaves this page
+  const t = e.touches[0];
+  if (t.clientX <= EDGE) {
+    drag = {x: t.clientX, y: t.clientY, dx: 0, on: false, t: Date.now(), el: null, pane: false};
+    addEventListener('touchmove', onMove, {passive: false});
+  }
+}, {passive: true});
+function onMove(e) {
+  if (!drag) return;
+  const t = e.touches[0], dx = t.clientX - drag.x, dy = t.clientY - drag.y;
+  if (!drag.on) {
+    if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { drag = null; stopMove(); return; } // it is a scroll
+    if (dx < 12) return;
+    drag.on = true; drag.pane = narrowOpen();
+    drag.el = drag.pane ? $('#pane') : $('#page');
+    if (drag.pane) document.body.classList.add('peek');
+    drag.el.style.transition = 'none';
+    drag.el.style.willChange = 'transform';
+  }
+  drag.dx = Math.max(0, dx);
+  drag.el.style.transform = 'translateX(' + drag.dx + 'px)';
+  if (e.cancelable) e.preventDefault();
+}
+addEventListener('touchend', () => {
+  stopMove();
+  if (!drag) return;
+  if (!drag.on) { drag = null; return; }
+  const v = drag.dx / Math.max(1, Date.now() - drag.t); // px per ms
+  settleDrag(drag.dx > innerWidth * 0.35 || (drag.dx > 50 && v > 0.5));
+});
+addEventListener('touchcancel', () => { stopMove(); if (drag && drag.on) settleDrag(false); else drag = null; });
+
+/* The Android app calls this when the back gesture / back button is used. true = handled here.
+   An open chat on a narrow screen slides closed; anywhere else this page slides back to the files page. */
+window.stashBack = function () {
+  if (SOLO) { StashApp.closePage(); return true; }
+  if (narrowOpen()) { slideCloseChat(); return true; }
+  goHome();
+  return true;
+};
+
+async function load(older, hold) {
+  if (!cur) return;
+  if (older) { if (loadingMore) return; loadingMore = true; pin = false; } else pin = true;
+  /* The newest open/search always wins: an older answer that arrives late is dropped. "Load earlier" does not take a new
+     number, so it is dropped too if a newer open/search started meanwhile. */
+  const my = older ? seq : ++seq, id = cur.id, q = $('#q').value.trim(), box = $('#msgs');
+  if (!older) { if (fadeIO) { fadeIO.disconnect(); fadeIO = null; } box.replaceChildren(spin()); }
+  try {
+    const d = await api('/api/chats/' + id + '/messages?limit=100' + (older && firstId ? '&before=' + firstId : '') + (q ? '&q=' + encodeURIComponent(q) : ''));
+    if (hold) await hold; // a chat that is still sliding in is filled in after the slide
+    if (!cur || cur.id !== id || my !== seq) return;
+    const oldHeight = box.scrollHeight;
+    box.querySelector('.loading')?.remove();
+    box.querySelector('.more')?.remove();
+    const frag = document.createDocumentFragment();
+    if (d.more) { const b = el('button', 'btn pill more', 'Load earlier messages'); b.type = 'button'; b.onclick = () => load(true); frag.append(b); }
+    let day = '';
+    const items = [];
+    for (const m of d.messages) {
+      const dd = fmtDay(m.ts);
+      if (dd !== day) { day = dd; const dv = el('div', 'day', dd); items.push(dv); frag.append(dv); }
+      const b = el('div', 'm' + (m.me ? ' me' : ''));
+      if (m.sender && cur.group) b.append(el('div', 'who', '+' + m.sender));
+      const mn = m.media ? mediaNode(m) : null;
+      if (m.label && !mn) b.append(el('span', 'lab', '[' + m.label + '] '));
+      if (mn) b.append(mn);
+      b.append(document.createTextNode(m.text), el('span', 't', fmtTime(m.ts)));
+      items.push(b); frag.append(b);
+    }
+    if (!d.messages.length && !older) frag.append(el('div', 'empty', q ? 'No message contains that.' : 'Empty chat.'));
+    if (d.messages.length) firstId = d.messages[0].id;
+    watchMsgs(box, items, frag.querySelector('.more'));
+    if (older) { const first = box.querySelector('.day'); if (first && first.textContent === day) first.remove(); box.prepend(frag); box.scrollTop = box.scrollHeight - oldHeight; }
+    else { box.append(frag); box.classList.remove('fadein'); void box.offsetWidth; box.classList.add('fadein'); }
+  } catch (e) {
+    if (e.message !== 'login' && my === seq) { box.querySelector('.loading')?.remove(); box.append(el('div', 'empty', e.message)); }
+  }
+  finally { if (older) loadingMore = false; }
+}
+
+$('#filter').oninput = drawList;
+$('#back').onclick = () => { if (SOLO) StashApp.closePage(); else if (narrowOpen()) slideCloseChat(); else closeChat(); };
+/* the moment the reader scrolls or touches the messages, pictures stop pulling the view to the bottom */
+for (const ev of ['wheel', 'touchstart', 'keydown']) $('#msgs').addEventListener(ev, () => { pin = false; }, {passive: true});
+let qt; $('#q').oninput = () => { clearTimeout(qt); qt = setTimeout(async () => { firstId = 0; await load(false); const m = $('#msgs'); m.scrollTop = m.scrollHeight; }, 350); };
+boot();
+</script>
+</body>
+</html>

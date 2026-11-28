@@ -28,6 +28,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Per file:  hash on the phone -> ask the server if it already has that hash -> if not, upload with X-Sha256
  * so the server verifies the bytes it received.
+ *
+ * Files bigger than the server's upload limit are counted ("too big") but never recorded in [BackupDb], so they are
+ * picked up automatically once the limit is raised. They are detected from the MediaStore size before hashing,
+ * so an hourly run does not re-read them.
  */
 class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     private val prefs = Prefs(applicationContext)
@@ -59,18 +63,22 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         if (session.authRequired && prefs.apiKey.isEmpty()) {
             return stop("Not connected: switch backup off and on again while logged in", alert = true)
         }
+        val limit = session.maxBytes
 
         prefs.status = "Looking for new photos and videos…"
         val todo = MediaSource.list(applicationContext, prefs).filter { !db.isDone(it.uri.toString(), it.size, it.modified) }
-        if (todo.isEmpty()) return finish(0, 0, 0, 0, "")
+        if (todo.isEmpty()) return finish(0, 0, 0, 0, 0, limit, "")
 
         var uploaded = 0
         var present = 0
         var skipped = 0
         var failed = 0
+        var tooBig = 0
         var lastProblem = ""
         for ((i, item) in todo.withIndex()) {
             if (isStopped) return Result.retry()
+            // over the server limit: count it, do not hash it, do not record it (retried after the limit is raised)
+            if (limit > 0 && item.size > limit) { tooBig++; continue }
             progress("Backing up ${i + 1} of ${todo.size}: ${item.name}", i, todo.size)
             val key = item.uri.toString()
             try {
@@ -78,10 +86,8 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
                 if (bytes == 0L) {
                     db.mark(key, item.size, item.modified, sha, "skipped"); skipped++; continue
                 }
-                if (session.maxBytes in 1 until bytes) {
-                    db.mark(key, item.size, item.modified, sha, "skipped"); skipped++
-                    lastProblem = "${item.name} is bigger than the server's upload limit"
-                    continue
+                if (limit in 1 until bytes) { // the file grew after MediaStore reported its size
+                    tooBig++; continue
                 }
                 if (StashApi.exists(base, prefs.apiKey, sha)) {
                     db.mark(key, item.size, item.modified, sha, "present"); present++; continue
@@ -92,6 +98,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
                     onProgress = { sent -> tick(item, sent, bytes, i, todo.size) },
                     cancelled = { isStopped },
                 )
+                preview(base, item.uri, item.mime, sha)
                 db.mark(key, item.size, item.modified, sha, "uploaded"); uploaded++
             } catch (e: UploadCancelled) {
                 return Result.retry()
@@ -102,10 +109,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
                     401, 403 -> return stop("The server rejected the key: switch backup off and on again", alert = true)
                     429 -> { prefs.status = "The server is rate limiting this phone. Will retry."; return Result.retry() }
                     507 -> return stop("The server's disk is full", alert = true)
-                    413 -> {
-                        db.mark(key, item.size, item.modified, "", "skipped"); skipped++
-                        lastProblem = "${item.name}: ${e.message}"
-                    }
+                    413 -> tooBig++ // not recorded: tried again next run, in case the limit was raised meanwhile
                     else -> { failed++; lastProblem = "${item.name}: ${e.message}" }
                 }
             } catch (e: IOException) {
@@ -120,14 +124,15 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
                 lastProblem = "${item.name}: the server closed the connection during the upload"
             }
         }
-        return finish(uploaded, present, skipped, failed, lastProblem)
+        return finish(uploaded, present, skipped, failed, tooBig, limit, lastProblem)
     }
 
-    private fun finish(uploaded: Int, present: Int, skipped: Int, failed: Int, lastProblem: String): Result {
+    private fun finish(uploaded: Int, present: Int, skipped: Int, failed: Int, tooBig: Int, limit: Long, lastProblem: String): Result {
         val parts = ArrayList<String>()
         if (uploaded > 0) parts.add("$uploaded uploaded")
         if (present > 0) parts.add("$present already on the server")
         if (skipped > 0) parts.add("$skipped skipped")
+        if (tooBig > 0) parts.add("$tooBig too big for the server limit (${limit / 1048576} MB)")
         if (failed > 0) parts.add("$failed failed (will retry next time)")
         prefs.lastRun = System.currentTimeMillis()
         prefs.status = (if (parts.isEmpty()) "Everything is backed up" else parts.joinToString(", ")) +
@@ -143,6 +148,15 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
     }
 
     // ---- local file access -------------------------------------------------------------------------------
+
+    /** Sends a small preview of a file that was just uploaded, so the website's grid does not load the original. Best effort. */
+    private fun preview(base: String, uri: Uri, mime: String, sha: String) {
+        try {
+            Thumbs.make(applicationContext, uri, mime)?.let { StashApi.putThumb(base, prefs.apiKey, sha, it) }
+        } catch (e: Exception) {
+            // a missing preview only means the website loads the original once and makes its own
+        }
+    }
 
     private fun open(uri: Uri): InputStream {
         try {

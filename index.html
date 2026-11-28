@@ -1,10 +1,22 @@
 <!doctype html>
+<!-- Path: index.html -->
 <html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Stash</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235b5bf0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z'/%3E%3Cpath d='M3.3 7 12 12l8.7-5M12 22V12'/%3E%3C/svg%3E">
+<script>
+/* Runs before the first paint: theme (no light flash), and "did we arrive by a slide?" (then no splash, slide in instead). */
+(function () {
+  var d = document.documentElement;
+  try { d.dataset.theme = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); } catch (e) {}
+  try {
+    var n = sessionStorage.getItem('stash-nav'); sessionStorage.removeItem('stash-nav');
+    if (n === 'fwd' || n === 'back') { d.classList.add('nosplash', 'enter-' + n); setTimeout(function () { d.classList.remove('enter-' + n); }, 700); }
+  } catch (e) {}
+})();
+</script>
 <style>
 :root{
   --bg:#f5f6f9; --panel:#ffffff; --ink:#14171f; --muted:#6a7384; --line:#e4e7ee;
@@ -18,10 +30,40 @@
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
+html{background:var(--bg)}
 html,body{margin:0}
-body{background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
 button,input,select{font:inherit;color:inherit}
 svg.i{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* ---- loading: splash (first open), thin busy bar (any request), spinner (waiting for content) ---- */
+@keyframes show{from{opacity:0}to{opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes busy{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
+@keyframes spIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:none}}
+@keyframes spPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+#splash{position:fixed;inset:0;z-index:100;display:grid;place-items:center;align-content:center;gap:18px;background:var(--bg);transition:opacity .4s ease}
+#splash.out{opacity:0;pointer-events:none}
+.nosplash #splash{display:none}
+.sp-logo{width:64px;height:64px;display:grid;place-items:center;border-radius:18px;color:var(--accent-ink);background:var(--accent);animation:spIn .45s ease both,spPulse 1.6s ease-in-out .45s infinite}
+.sp-logo svg{width:34px;height:34px}
+.sp-bar{width:120px;height:3px;border-radius:3px;background:var(--line);overflow:hidden;position:relative;animation:show .45s ease both}
+.sp-bar i,#busy i{position:absolute;top:0;bottom:0;left:0;width:40%;background:var(--accent);border-radius:3px;animation:busy 1.1s ease-in-out infinite}
+#busy{position:fixed;left:0;right:0;top:0;height:3px;z-index:95;overflow:hidden;opacity:0;transition:opacity .3s;pointer-events:none}
+#busy.on{opacity:1}
+.loading{display:grid;place-items:center;padding:60px 20px;opacity:0;animation:show .3s .15s both}
+.loading i{width:26px;height:26px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--accent);animation:spin .8s linear infinite}
+.fadein{animation:show .25s}
+
+/* ---- slide transitions between pages: the page wrapper moves (see the script) ---- */
+@keyframes inLeft{from{transform:translateX(-24%)}to{transform:none}}
+@keyframes outLeft{to{transform:translateX(-24%)}}
+.enter-back #page{animation:inLeft .26s cubic-bezier(.2,.8,.2,1)}
+.leave-fwd #page{animation:outLeft .2s ease-in forwards}
+/* only transform is animated (no opacity: a faded full-screen layer is costly on a weak GPU), and the layer is promoted up front */
+.enter-back #page,.leave-fwd #page{will-change:transform}
+/* the blurred header is very costly to repaint while the whole page moves: drop the blur during a slide */
+.enter-back header.top,.leave-fwd header.top{backdrop-filter:none;background:var(--bg)}
 
 /* kinds */
 .k-image{--k:#e5589a}.k-video{--k:#8b5cf6}.k-audio{--k:#f59e0b}.k-doc{--k:#3b82f6}
@@ -37,6 +79,7 @@ svg.i{width:1.15em;height:1.15em;fill:none;stroke:currentColor;stroke-width:2;st
 .btn.ghost{border-color:transparent;background:transparent}
 .btn.ghost:hover{background:color-mix(in srgb,var(--ink) 7%,transparent)}
 .btn.icon{padding:8px;border-radius:10px}
+a.btn{color:inherit;text-decoration:none}
 .btn.sm{padding:5px 10px;font-size:13px}
 .field{width:100%;padding:10px 12px;border:1px solid var(--line);background:var(--bg);border-radius:10px;outline:none}
 .field:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
@@ -67,7 +110,7 @@ main{max-width:1180px;margin:0 auto;padding:22px clamp(14px,4vw,32px) 120px}
 .drop b{display:block;font-size:16px}
 .drop span{color:var(--muted);font-size:13.5px}
 .dragover{position:fixed;inset:0;z-index:60;display:none;place-items:center;background:color-mix(in srgb,var(--bg) 70%,transparent);backdrop-filter:blur(6px)}
-.dragover.on{display:grid}
+.dragover.on{display:grid;animation:show .15s}
 .dragover div{border:3px dashed var(--accent);border-radius:24px;padding:60px 70px;font-size:22px;font-weight:700;color:var(--accent);background:var(--panel);box-shadow:var(--shadow);display:flex;gap:14px;align-items:center}
 
 /* toolbar */
@@ -87,6 +130,10 @@ select.btn{padding-right:10px;appearance:auto}
 /* grid */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px}
 .card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;cursor:pointer;transition:.15s}
+.sentinel{height:1px}
+/* fade while scrolling: cards/rows are transparent until the observer marks them .in (only when .fx is set: no reduced motion) */
+.fx .card,.fx .row:not(.head){transition:opacity .22s ease,transform .15s,box-shadow .15s}
+.fx .card:not(.in),.fx .row:not(.head):not(.in){opacity:0}
 .card:hover{box-shadow:var(--shadow);transform:translateY(-2px)}
 .card.sel{outline:2px solid var(--accent);outline-offset:-2px}
 .thumb{height:130px;display:grid;place-items:center;background:color-mix(in srgb,var(--k) 10%,var(--panel));color:var(--k);overflow:hidden}
@@ -114,6 +161,8 @@ select.btn{padding-right:10px;appearance:auto}
 .row .nm{display:flex;gap:10px;align-items:center;min-width:0}
 .row .nm .tile{width:34px;height:34px;flex:none}
 .row .c{color:var(--muted);font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .nmt{min-width:0}
+.row .sub.m{display:none;margin-top:0}
 .row .acts{display:flex;justify-content:flex-end;gap:2px}
 
 .empty{text-align:center;color:var(--muted);padding:60px 20px}
@@ -195,6 +244,113 @@ dialog::backdrop{background:rgba(8,10,16,.6);backdrop-filter:blur(3px)}
   .hactions{margin-left:auto}
 }
 
+/* ---- phone layout ----
+   Everything below only applies on a phone (narrow screen, or a phone turned sideways). The desktop page is unchanged.
+   Phone-only controls carry the class "ph" and stay hidden elsewhere. */
+.ph,.statline,.uprog,#chatsBtn .lbl{display:none}
+#menuShade{position:fixed;inset:0;z-index:65}
+#menu{position:fixed;z-index:70;min-width:220px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;display:grid;padding:6px;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+#menu button{display:flex;gap:12px;align-items:center;text-align:left;min-height:44px;padding:0 12px;border:0;border-radius:10px;background:transparent;cursor:pointer}
+#menu button:active{background:color-mix(in srgb,var(--ink) 10%,transparent)}
+#menu button.on{color:var(--accent);font-weight:600}
+#menu .chk{margin-left:auto}
+#menu .hd{padding:10px 12px 2px;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+@media (pointer:coarse){ .drop{display:none} }
+@media (max-width:640px), (max-height:480px) and (pointer:coarse){
+  html{-webkit-text-size-adjust:100%}
+  .ph{display:inline-flex}
+  .btn{min-height:44px}
+  .btn.icon{min-width:44px;justify-content:center}
+  .btn.sm{min-height:40px}
+  .field{font-size:16px}
+
+  /* top bar: one slim row. Chats first (it is what is used most), then search, then the rest in a menu */
+  header.top{background:var(--bg);backdrop-filter:none;flex-wrap:nowrap;gap:6px;padding:6px max(10px,env(safe-area-inset-right)) 6px max(10px,env(safe-area-inset-left))}
+  .brand{gap:8px;font-size:17px}
+  .brand span{display:inline}
+  .search{display:none;margin:0;max-width:none}
+  header.top.searching .search{display:block;flex:1}
+  header.top.searching .brand,header.top.searching .hactions{display:none}
+  header.top:not(.searching) #searchX{display:none}
+  .hactions{margin-left:auto;gap:2px}
+  #appBtn,#theme,#logout,#uploadBtn{display:none}
+  #chatsBtn{width:auto;padding:0 14px;gap:8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-weight:600}
+  #chatsBtn .lbl{display:inline}
+  #moreBtn svg{stroke-width:3.4}
+
+  main{padding:10px max(10px,env(safe-area-inset-right)) 150px max(10px,env(safe-area-inset-left))}
+
+  /* storage: a line, not three cards */
+  .stats{display:block;margin-bottom:6px}
+  .stat{display:none}
+  .statline{display:block;margin:0 2px 8px;color:var(--muted);font-size:13px}
+
+  /* filters scroll sideways; sort, WhatsApp filter and grid/list live behind one button */
+  .toolbar{flex-wrap:nowrap;gap:8px;margin-bottom:10px}
+  .chips{flex-wrap:nowrap;overflow-x:auto;min-width:0;padding:2px 0;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:none;min-height:38px;padding:6px 14px;font-size:14px}
+  #sort,#srcSel,.seg{display:none}
+  #viewBtn{flex:none}
+
+  /* files: no hover on a touch screen; a long press selects */
+  #files{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:3px}
+  .card{border:0;border-radius:8px}
+  .card:hover{transform:none;box-shadow:none}
+  .thumb{height:auto;aspect-ratio:1/1}
+  .thumb svg.i{width:34px;height:34px}
+  .card .meta{position:absolute;left:0;right:0;bottom:0;padding:18px 6px 5px;background:linear-gradient(transparent,rgba(0,0,0,.62));color:#fff}
+  .card .name{font-size:11.5px;font-weight:500}
+  .card .sub{display:none}
+  .card.k-image:not(.ni) .meta,.card.k-image:not(.ni) .ext{display:none}
+  .ext{left:6px;top:6px;font-size:10px;padding:1px 5px}
+  .pick{right:6px;top:6px}
+  .card:hover .pick{opacity:0}
+  .card.sel .pick,body:has(#bulk:not([hidden])) .pick{opacity:1}
+
+  .list{border-radius:12px}
+  .row{grid-template-columns:minmax(0,1fr);padding:10px 12px;gap:10px}
+  .row.head,.row .c,.row .acts,.row .pick{display:none}
+  .row .sub.m{display:block}
+  body:has(#bulk:not([hidden])) .row{grid-template-columns:28px minmax(0,1fr)}
+  body:has(#bulk:not([hidden])) .row .pick{display:grid}
+
+  /* selecting: the actions sit at the bottom, where the thumb is */
+  .bulk{position:fixed;left:0;right:0;bottom:0;z-index:45;margin:0;gap:6px;flex-wrap:nowrap;border-radius:16px 16px 0 0;
+    padding:8px max(10px,env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));
+    background:var(--panel);border-top:1px solid var(--line);box-shadow:0 -6px 24px rgba(0,0,0,.18)}
+  .bulk b{white-space:nowrap;font-size:14px}
+
+  /* upload button floats; the upload list is a sheet along the bottom edge */
+  #fab{position:fixed;z-index:42;right:max(16px,env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom));width:56px;height:56px;padding:0;
+    border:0;border-radius:18px;align-items:center;justify-content:center;cursor:pointer;background:var(--accent);color:var(--accent-ink);box-shadow:0 6px 18px rgba(0,0,0,.28)}
+  #fab svg{width:26px;height:26px;stroke-width:2.4}
+  #fab:active{transform:scale(.94);filter:brightness(.9)}
+  body:has(#bulk:not([hidden])) #fab,body:has(dialog[open]) #fab{display:none}
+  body:has(.uploads:not([hidden])) #fab{bottom:calc(72px + env(safe-area-inset-bottom))}
+  .uploads{left:0;right:0;bottom:0;width:auto;border-radius:16px 16px 0 0;border-width:1px 0 0;padding-bottom:env(safe-area-inset-bottom)}
+  .uprog{display:block;height:3px;background:var(--line)}
+  .uprog i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
+  .uploads header{min-height:50px;padding:6px 6px 6px 16px;cursor:pointer}
+  .ujobs{display:none}
+  .uploads.open .ujobs{display:block;max-height:45vh}
+  #toasts{bottom:calc(84px + env(safe-area-inset-bottom))}
+
+  /* viewer: the whole screen; the buttons in a row underneath; tap the picture to hide them */
+  #viewer{width:100vw;max-width:100vw;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;margin:0;border-radius:0}
+  .vbar{padding:6px 8px 6px 12px}
+  .vbody{flex-direction:column}
+  .stage{min-height:0}
+  .info{display:flex;flex:none;width:auto;flex-direction:row;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-left:0;border-top:1px solid var(--line)}
+  .info dl{display:none}
+  .info .btns{display:flex;width:100%;margin-top:0}
+  .info .btns .btn{flex:1;padding:0 8px}
+  .navbtn{display:none}
+  #viewer.bare .vbar,#viewer.bare .info{display:none}
+  #dlg{width:min(420px,calc(100vw - 24px))}
+}
+
 /* press feedback: no blue browser tap box; instead the control sinks a little, like a real button */
 *{-webkit-tap-highlight-color:transparent}
 button,.card,.row,.drop,.chip{touch-action:manipulation}
@@ -208,10 +364,51 @@ button,.card,.row,.drop,.chip{touch-action:manipulation}
 .seg button:active{background:var(--accent-soft)}
 .drop:active{transform:scale(.99);background:color-mix(in srgb,var(--accent) 14%,var(--panel))}
 .navbtn:active{transform:translateY(-50%) scale(.92)}
-@media (prefers-reduced-motion:reduce){.btn:active,.chip:active,.card:active,.drop:active,.navbtn:active{transform:none}.navbtn:active{transform:translateY(-50%)}}
+
+/* ---- fade and slide animations (only opacity and transform: cheap on a weak GPU) ---- */
+@keyframes dlgIn{from{opacity:0;transform:scale(.97)}}
+@keyframes dlgOut{to{opacity:0;transform:scale(.97)}}
+@keyframes hide{to{opacity:0}}
+@keyframes up{from{opacity:0;transform:translateY(12px)}}
+@keyframes inFromR{from{opacity:0;transform:translateX(48px)}}
+@keyframes inFromL{from{opacity:0;transform:translateX(-48px)}}
+@keyframes outToL{to{opacity:0;transform:translateX(-48px)}}
+@keyframes outToR{to{opacity:0;transform:translateX(48px)}}
+@keyframes toastOut{to{opacity:0;transform:translateY(8px)}}
+/* dialogs and the file viewer fade in; the "closing" class (set by the script) fades them out before they close */
+dialog[open]{animation:dlgIn .2s cubic-bezier(.2,.8,.2,1)}
+dialog[open]::backdrop{animation:show .2s}
+dialog.closing{animation:dlgOut .17s ease-in forwards}
+dialog.closing::backdrop{animation:hide .17s forwards}
+/* the picture fades in once it has loaded (thumbnails too) */
+.stage img.pv,.thumb img{opacity:0;transition:opacity .3s}
+.stage img.pv.ld,.thumb img.ld{opacity:1}
+/* moving to the next / previous file: the old one slides out, the new one slides in from that side */
+.in-fwd>.pv,.in-fwd>.noprev{animation:inFromR .26s cubic-bezier(.2,.8,.2,1)}
+.in-back>.pv,.in-back>.noprev{animation:inFromL .26s cubic-bezier(.2,.8,.2,1)}
+.out-fwd>.pv,.out-fwd>.noprev{animation:outToL .12s ease-in forwards}
+.out-back>.pv,.out-back>.noprev{animation:outToR .12s ease-in forwards}
+/* small things that appear */
+#menu:not([hidden]){animation:show .15s}
+#login:not([hidden]){animation:show .25s}
+.job{animation:show .2s}
+.uploads:not([hidden]),.bulk:not([hidden]){animation:up .22s cubic-bezier(.2,.8,.2,1)}
+.toast.out{animation:toastOut .2s forwards}
+@media (prefers-reduced-motion:reduce){
+  .btn:active,.chip:active,.card:active,.drop:active,.navbtn:active{transform:none}.navbtn:active{transform:translateY(-50%)}.sp-logo{animation:none}.enter-back #page{animation:none}
+  dialog[open],dialog[open]::backdrop,dialog.closing,dialog.closing::backdrop,.in-fwd>.pv,.in-fwd>.noprev,.in-back>.pv,.in-back>.noprev,.out-fwd>.pv,.out-fwd>.noprev,.out-back>.pv,.out-back>.noprev,
+  #menu:not([hidden]),#login:not([hidden]),.job,.uploads:not([hidden]),.bulk:not([hidden]),.toast.out{animation:none}
+  .stage img.pv,.thumb img{transition:none}
+}
 </style>
 </head>
 <body>
+
+<div id="splash" aria-hidden="true">
+  <div class="sp-logo"><svg class="i" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/><path d="M3.3 7L12 12l8.7-5"/><path d="M12 22V12"/></svg></div>
+  <div class="sp-bar"><i></i></div>
+</div>
+<div id="busy" aria-hidden="true"><i></i></div>
 
 <div id="login" hidden>
   <form class="lcard" id="loginForm">
@@ -224,13 +421,18 @@ button,.card,.row,.drop,.chip{touch-action:manipulation}
   </form>
 </div>
 
+<div id="page">
 <header class="top">
   <div class="brand"><div class="tile" id="logo"></div><span>Stash</span></div>
   <div class="search"><span id="searchIcon"></span><input class="field" id="q" type="search" placeholder="Search your files   ( / )" autocomplete="off"></div>
+  <button class="btn ghost icon ph" id="searchX" type="button" title="Close search" aria-label="Close search"></button>
   <div class="hactions">
+    <button class="btn ghost icon ph" id="searchBtn" type="button" title="Search" aria-label="Search"></button>
+    <a class="btn ghost icon" id="chatsBtn" href="/chats" title="WhatsApp chats"><span class="lbl">Chats</span></a>
     <button class="btn ghost icon" id="appBtn" title="Phone backup &amp; app settings" hidden></button>
     <button class="btn ghost icon" id="theme" title="Toggle dark mode"></button>
     <button class="btn ghost icon" id="logout" title="Log out" hidden></button>
+    <button class="btn ghost icon ph" id="moreBtn" type="button" title="More" aria-label="More"></button>
     <button class="btn primary" id="uploadBtn"></button>
   </div>
 </header>
@@ -251,18 +453,30 @@ button,.card,.row,.drop,.chip{touch-action:manipulation}
       <option value="big">Largest first</option>
       <option value="small">Smallest first</option>
     </select>
+    <select class="btn" id="srcSel" title="Show WhatsApp files" hidden>
+      <option value="all">All files</option>
+      <option value="wa">WhatsApp only</option>
+      <option value="other">Hide WhatsApp</option>
+    </select>
     <div class="seg"><button id="vGrid" title="Grid view"></button><button id="vList" title="List view"></button></div>
+    <button class="btn icon ph" id="viewBtn" type="button" title="View and sort" aria-label="View and sort"></button>
   </section>
   <section class="bulk" id="bulk" hidden></section>
-  <section id="files"></section>
+  <section id="files"><div class="loading"><i></i></div></section>
 </main>
+</div>
 
 <div class="dragover" id="overlay"><div><span id="ovIcon"></span> Drop to upload</div></div>
 
 <div class="uploads" id="uploads" hidden>
+  <div class="uprog"><i id="upProg"></i></div>
   <header><span id="upTitle">Uploads</span><button class="btn ghost icon sm" id="upClear" title="Dismiss finished"></button></header>
   <div class="ujobs" id="ujobs"></div>
 </div>
+
+<button id="fab" class="ph" type="button" title="Upload files" aria-label="Upload files"></button>
+<div id="menuShade" hidden></div>
+<div id="menu" role="menu" hidden></div>
 
 <dialog id="dlg"></dialog>
 <dialog id="viewer"></dialog>
@@ -274,6 +488,21 @@ button,.card,.row,.drop,.chip{touch-action:manipulation}
 'use strict';
 /* ---------- tiny helpers ---------- */
 const $ = s => document.querySelector(s);
+const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* Every dialog.close() (X button, click outside, Esc, the app's Back) fades the dialog out first, then really closes it. */
+(function () {
+  const realClose = HTMLDialogElement.prototype.close;
+  HTMLDialogElement.prototype.close = function (rv) {
+    if (!this.open || REDUCE) return realClose.call(this, rv);
+    if (this.classList.contains('closing')) return;
+    this.classList.add('closing');
+    setTimeout(() => { this.classList.remove('closing'); realClose.call(this, rv); }, 170);
+  };
+})();
+/* When this page arrived by a slide, heavy work (building the file list, decoding photos) waits until the slide has
+   finished; run in the middle of the animation it makes the slide stutter. Returns a promise to wait on, or null. */
+const SLID = document.documentElement.classList.contains('enter-back') || document.documentElement.classList.contains('enter-fwd');
+const afterSlide = () => SLID && !REDUCE ? new Promise(r => setTimeout(r, 280)) : null;
 const ICONS = {
   upload:'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M17 8l-5-5-5 5 M12 3v12',
   download:'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3',
@@ -299,8 +528,10 @@ const ICONS = {
   lock:'M5 11h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z M7 11V7a5 5 0 0 1 10 0v4',
   box:'M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z M3.3 7L12 12l8.7-5 M12 22V12',
   check:'M20 6L9 17l-5-5',
+  plus:'M12 5v14 M5 12h14', more:'M12 5h.01 M12 12h.01 M12 19h.01',
   refresh:'M23 4v6h-6 M1 20v-6h6 M3.5 9a9 9 0 0 1 14.9-3.4L23 10 M1 14l4.6 4.4A9 9 0 0 0 20.5 15',
-  sliders:'M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6'
+  sliders:'M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6',
+  chat:'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
 };
 function ic(name){
   const s = document.createElementNS('http://www.w3.org/2000/svg','svg');
@@ -329,24 +560,58 @@ const fmtBytes = n => {
   do { n /= 1024; i++; } while (n >= 1024 && i < u.length-1);
   return (n >= 100 ? n.toFixed(0) : n.toFixed(1)) + ' ' + u[i];
 };
+/* Intl formatters are slow to create (about 30x slower than reusing one), and these run for every file on every redraw,
+   so they are made once here. */
+const RTF = new Intl.RelativeTimeFormat(undefined,{numeric:'auto'});
+const DF_DATE = new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric'});
+const DF_FULL = new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'});
 function fmtWhen(ts){
   const d = new Date(ts*1000), diff = (Date.now()-d)/1000;
   if (diff < 60) return 'just now';
-  const rtf = new Intl.RelativeTimeFormat(undefined,{numeric:'auto'});
-  if (diff < 3600) return rtf.format(-Math.floor(diff/60),'minute');
-  if (diff < 86400) return rtf.format(-Math.floor(diff/3600),'hour');
-  if (diff < 7*86400) return rtf.format(-Math.floor(diff/86400),'day');
-  return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
+  if (diff < 3600) return RTF.format(-Math.floor(diff/60),'minute');
+  if (diff < 86400) return RTF.format(-Math.floor(diff/3600),'hour');
+  if (diff < 7*86400) return RTF.format(-Math.floor(diff/86400),'day');
+  return DF_DATE.format(d);
 }
-const fmtFull = ts => new Date(ts*1000).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'});
+const fmtFull = ts => DF_FULL.format(new Date(ts*1000));
 function toast(msg, kind){
   const t = h('div',{class:'toast '+(kind||''),text:msg}); $('#toasts').append(t);
-  setTimeout(()=>t.remove(), 3500);
+  setTimeout(()=>{ t.classList.add('out'); setTimeout(()=>t.remove(), 220); }, 3300);
 }
 const store = {
   get(k,d){ try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k,v){ try { localStorage.setItem(k,v); } catch {} }
 };
+
+/* ---------- loading indicators ---------- */
+/* Thin bar at the top while any request runs. It only appears if the wait is longer than 180 ms (no flicker) and fades out. */
+let busyN = 0, busyT = 0;
+function busy(d){
+  busyN = Math.max(0, busyN + d);
+  const b = $('#busy');
+  if (busyN > 0) { if (!busyT && !b.classList.contains('on')) busyT = setTimeout(() => { busyT = 0; if (busyN > 0) b.classList.add('on'); }, 180); }
+  else { clearTimeout(busyT); busyT = 0; b.classList.remove('on'); }
+}
+/* The splash fades out once the first data is in (and never before 450 ms after the page started, so it does not flash). */
+function hideSplash(){
+  const s = $('#splash'); if (!s) return;
+  setTimeout(() => { s.classList.add('out'); setTimeout(() => s.remove(), 450); }, Math.max(0, 450 - performance.now()));
+}
+setTimeout(hideSplash, 8000); // safety net
+
+/* ---------- slide to another page (Chats comes in from the right) ---------- */
+let leaving = false;
+function resetLeave(){ leaving = false; document.documentElement.classList.remove('leave-fwd'); try { sessionStorage.removeItem('stash-nav'); } catch {} }
+function goChats(){
+  if (window.StashApp && StashApp.openPage) { StashApp.openPage('/chats'); return; }  // Android app: the app slides the Chats page in natively
+  if (leaving) return;
+  leaving = true;
+  try { sessionStorage.setItem('stash-nav','fwd'); } catch {}
+  if (REDUCE) location.href = '/chats';
+  else { document.documentElement.classList.add('leave-fwd'); setTimeout(() => { location.href = '/chats'; }, 200); }
+  setTimeout(resetLeave, 2500); // if the server never answers, bring the page back
+}
+addEventListener('pageshow', e => { if (e.persisted) resetLeave(); });
 
 /* ---------- file kinds ---------- */
 const EXT = {
@@ -380,25 +645,35 @@ function previewOf(f){
 const rawUrl  = (f, asText) => '/api/files/'+f.id+'/raw'+(asText ? '?as=text' : '');
 const dlUrl   = f => '/api/files/'+f.id+'/download';
 
+/* ---------- phone ---------- */
+const PHONE = matchMedia('(max-width:640px), (max-height:480px) and (pointer:coarse)');
+
 /* ---------- state ---------- */
-let files = [], stats = null, maxBytes = 0, authRequired = false;
+let files = [], stats = null, maxBytes = 0, authRequired = false, firstPaint = true;
 let view = store.get('view','grid'), filter = 'all', sortBy = store.get('sort','new'), query = '';
+/* WhatsApp filter: 'all' shows everything, 'wa' only files tagged "whatsapp" (chat media), 'other' hides them.
+   It only has an effect (and its control only shows) while the vault holds at least one such file. */
+let srcMode = store.get('src','all'), hasWa = false;
 const selected = new Set();
 
 /* ---------- api ---------- */
 async function api(path, opts){
-  const r = await fetch(path, {credentials:'same-origin', ...(opts||{})});
-  if (r.status === 401) { showLogin(); throw new Error('Login required'); }
-  if (!r.ok) {
-    let m = r.statusText;
-    try { m = (await r.json()).error || m; } catch {}
-    throw new Error(m);
-  }
-  return r.json();
+  busy(1);
+  try {
+    const r = await fetch(path, {credentials:'same-origin', ...(opts||{})});
+    if (r.status === 401) { showLogin(); throw new Error('Login required'); }
+    if (!r.ok) {
+      let m = r.statusText;
+      try { m = (await r.json()).error || m; } catch {}
+      throw new Error(m);
+    }
+    return await r.json();
+  } finally { busy(-1); }
 }
-async function refresh(){
+async function refresh(hold){
   try {
     const d = await api('/api/files');
+    if (hold) await hold; // the list is built after a slide has finished
     files = d.files; stats = d.stats;
     for (const id of [...selected]) if (!files.some(f => f.id === id)) selected.delete(id);
     render();
@@ -408,9 +683,15 @@ let refreshTimer;
 const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(refresh, 350); };
 
 /* ---------- derived list ---------- */
+const isWa = f => f.source === 'whatsapp';
+/* the files that pass the WhatsApp filter (everything when the filter is off or there is nothing to filter) */
+function pool(){
+  if (!hasWa || srcMode === 'all') return files;
+  return files.filter(f => srcMode === 'wa' ? isWa(f) : !isWa(f));
+}
 function visible(){
   const q = query.trim().toLowerCase();
-  let out = files.filter(f => (filter==='all' || kindOf(f)===filter) && (!q || f.name.toLowerCase().includes(q) || f.mime.toLowerCase().includes(q)));
+  let out = pool().filter(f => (filter==='all' || kindOf(f)===filter) && (!q || f.name.toLowerCase().includes(q) || f.mime.toLowerCase().includes(q)));
   const by = {
     new:(a,b)=>b.created-a.created, old:(a,b)=>a.created-b.created,
     az:(a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}), za:(a,b)=>b.name.localeCompare(a.name,undefined,{numeric:true}),
@@ -420,12 +701,17 @@ function visible(){
 }
 
 /* ---------- rendering ---------- */
-function render(){ renderStats(); renderChips(); renderBulk(); renderFiles(); }
+function render(){
+  hasWa = files.some(isWa);
+  renderStats(); renderSrc(); renderChips(); renderBulk(); renderFiles();
+  if (firstPaint) { firstPaint = false; for (const id of ['#stats','#files']) { const e = $(id); e.classList.remove('fadein'); void e.offsetWidth; e.classList.add('fadein'); } } // first content fades in
+}
 
 function renderStats(){
   if (!stats) return;
   const pct = Math.max(0.5, stats.bytes / Math.max(1, stats.bytes + stats.free) * 100);
   $('#stats').replaceChildren(
+    h('div',{class:'statline',text:stats.count+' file'+(stats.count===1?'':'s')+' · '+fmtBytes(stats.bytes)+' stored · '+fmtBytes(stats.free)+' free'}),
     h('div',{class:'stat'}, h('div',{class:'l',text:'Files'}), h('div',{class:'v',text:String(stats.count)})),
     h('div',{class:'stat'}, h('div',{class:'l',text:'Stored'}), h('div',{class:'v',text:fmtBytes(stats.bytes)})),
     h('div',{class:'stat'}, h('div',{class:'l',text:'Server disk free'}), h('div',{class:'v',text:fmtBytes(stats.free)}),
@@ -433,9 +719,18 @@ function renderStats(){
   );
 }
 
+function renderSrc(){
+  const s = $('#srcSel');
+  s.hidden = !hasWa;
+  s.value = srcMode;
+}
+function setSrc(v){
+  srcMode = v; store.set('src', v);
+  render();
+}
 function renderChips(){
-  const counts = {all: files.length};
-  for (const f of files) { const k = kindOf(f); counts[k] = (counts[k]||0)+1; }
+  const shown = pool(), counts = {all: shown.length};
+  for (const f of shown) { const k = kindOf(f); counts[k] = (counts[k]||0)+1; }
   if (filter !== 'all' && !counts[filter]) filter = 'all';
   $('#chips').replaceChildren(...KINDS.filter(([k]) => k==='all' || counts[k]).map(([k,label]) =>
     h('button',{class:'chip'+(filter===k?' on':''), onclick:()=>{ filter=k; render(); }}, label, h('small',{text:String(counts[k]||0)}))));
@@ -448,69 +743,138 @@ function renderBulk(){
   const vis = visible();
   b.replaceChildren(
     h('b',{text: selected.size + ' selected'}),
-    h('button',{class:'btn sm',onclick:()=>{ vis.forEach(f=>selected.add(f.id)); render(); }, text:'Select all shown'}),
-    h('button',{class:'btn sm',onclick:()=>downloadZip([...selected]), title:'Download as .zip'}, ic('download'), 'Download .zip'),
-    h('button',{class:'btn sm danger',onclick:bulkDelete}, ic('trash'), 'Delete'),
-    h('button',{class:'btn sm ghost',onclick:()=>{ selected.clear(); render(); }}, 'Clear')
+    h('button',{class:'btn sm',onclick:()=>{ vis.forEach(f=>selected.add(f.id)); render(); }, text: PHONE.matches ? 'All' : 'Select all shown'}),
+    h('button',{class:'btn sm',onclick:()=>downloadZip([...selected]), title:'Download as .zip','aria-label':'Download as .zip'}, ic('download'), PHONE.matches ? null : 'Download .zip'),
+    h('button',{class:'btn sm danger',onclick:bulkDelete,'aria-label':'Delete'}, ic('trash'), PHONE.matches ? null : 'Delete'),
+    h('button',{class:'btn sm ghost',onclick:()=>{ selected.clear(); render(); },'aria-label':'Clear selection'}, PHONE.matches ? ic('x') : 'Clear')
   );
 }
 
 function toggleSel(id, ev){
   ev && ev.stopPropagation();
-  selected.has(id) ? selected.delete(id) : selected.add(id);
-  render();
+  const on = !selected.has(id);
+  on ? selected.add(id) : selected.delete(id);
+  /* only the tapped tile changes: redrawing the whole grid on every tap is slow, and would drop the finger's tile mid-press */
+  for (const e of $('#files').querySelectorAll('[data-id]')) if (e.dataset.id === id) e.classList.toggle('sel', on);
+  const hd = $('#files .row.head');
+  if (hd) hd.classList.toggle('sel', visible().every(f => selected.has(f.id)));
+  renderBulk();
+}
+
+/* One preview at a time, so the page never stalls while it makes them. Best effort: any failure just means the next visit tries again. */
+let thumbQ = Promise.resolve();
+function queueThumb(f, img){
+  if (f.thumbBusy || !f.sha256) return;
+  f.thumbBusy = true;
+  thumbQ = thumbQ.then(async () => {
+    try {
+      const w = img.naturalWidth, hh = img.naturalHeight;
+      if (!w || !hh) return;
+      const sc = Math.min(1, 320 / Math.max(w, hh)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(hh * sc));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.72));
+      if (!blob || blob.size > 120 * 1024) return;
+      const r = await fetch('/api/files/by-hash/' + f.sha256 + '/thumb', {method:'PUT', body: blob, credentials:'same-origin'});
+      if (r.ok) f.thumb = true;
+    } catch (e) { /* tainted canvas, no auth, server busy: skip */ }
+    finally { f.thumbBusy = false; }
+  });
 }
 
 function thumb(f, big){
   const k = kindOf(f);
   if (k==='image' && f.size < 8*1024*1024 && f.mime !== 'image/heic' && !f.mime.includes('tiff')) {
-    const img = h('img',{loading:'lazy',alt:'',src:rawUrl(f)});
-    img.onerror = () => img.replaceWith(ic(k));
+    /* A stored preview (about 320 px, 10-30 KB) when the server has one; otherwise the original, and once that has loaded
+       the browser makes the preview itself and sends it to the server, so each picture is only ever loaded big once. */
+    const small = !!f.thumb, img = h('img',{loading:'lazy',decoding:'async',alt:'',src: small ? '/api/files/'+f.id+'/thumb' : rawUrl(f)});
+    img.onload = () => { img.classList.add('ld'); if (!small && !f.thumb) queueThumb(f, img); }; // fades in once it has loaded
+    img.onerror = () => { const c = img.closest('.card'); if (c) c.classList.add('ni'); img.replaceWith(ic(k)); };
     return img;
   }
   return ic(k);
+}
+
+/* Many files: only the first CHUNK are built; the next CHUNK is appended when the end comes within ~900px of the screen,
+   so a vault with thousands of files never puts thousands of cards in the page. Cards and rows fade in as they scroll
+   into view and fade out as they leave (an IntersectionObserver toggles .in; no scroll listener). */
+const CHUNK = 72, HAS_IO = 'IntersectionObserver' in window;
+let shownN = CHUNK, shownKey = '', moreIO = null, fadeIO = null;
+
+function buildItem(f, i, list){
+  const k = kindOf(f), sel = selected.has(f.id), open = () => PHONE.matches && selected.size ? toggleSel(f.id) : openViewer(list,i);
+  if (view === 'grid') {
+    const th = thumb(f);
+    return h('div',{class:'card k-'+k+(sel?' sel':'')+(th.tagName==='IMG'?'':' ni'), 'data-id':f.id, onclick:open},
+      h('div',{class:'thumb'}, th),
+      extOf(f.name) ? h('span',{class:'ext',text:extOf(f.name).slice(0,5)}) : null,
+      h('div',{class:'pick',onclick:e=>toggleSel(f.id,e)}, ic('check')),
+      h('div',{class:'meta'}, h('div',{class:'name',title:f.name,text:f.name}),
+        h('div',{class:'sub',text:fmtBytes(f.size)+' · '+fmtWhen(f.created)})));
+  }
+  return h('div',{class:'row k-'+k+(sel?' sel':''), 'data-id':f.id, onclick:open},
+    h('div',{class:'pick',onclick:e=>toggleSel(f.id,e)}, ic('check')),
+    h('div',{class:'nm'}, h('div',{class:'tile'}, ic(k)),
+      h('div',{class:'nmt'}, h('div',{class:'name',title:f.name,text:f.name}), h('div',{class:'sub m',text:fmtBytes(f.size)+' · '+fmtWhen(f.created)}))),
+    h('div',{class:'c',text:fmtBytes(f.size)}),
+    h('div',{class:'c type',text:(extOf(f.name)||'file').toUpperCase()}),
+    h('div',{class:'c when',title:fmtFull(f.created),text:fmtWhen(f.created)}),
+    h('div',{class:'acts'},
+      h('button',{class:'btn ghost icon sm',title:'Download',onclick:e=>{ e.stopPropagation(); download(f); }}, ic('download')),
+      h('button',{class:'btn ghost icon sm',title:'Delete',onclick:e=>{ e.stopPropagation(); removeFiles([f]); }}, ic('trash'))));
 }
 
 function renderFiles(){
   const list = visible(), root = $('#files');
   $('#vGrid').classList.toggle('on', view==='grid');
   $('#vList').classList.toggle('on', view==='list');
+  if (moreIO) moreIO.disconnect();
+  if (fadeIO) fadeIO.disconnect();
+  moreIO = fadeIO = null;
   if (!list.length) {
     root.replaceChildren(h('div',{class:'empty'},
       h('div',{class:'tile'}, ic(files.length ? 'search' : 'box')),
       h('h3',{text: files.length ? 'Nothing matches' : 'Your vault is empty'}),
-      h('div',{text: files.length ? 'Try a different search or filter.' : 'Drop some files above to get started.'})));
+      h('div',{text: files.length ? 'Try a different search or filter.' : (PHONE.matches ? 'Tap the + button to upload files.' : 'Drop some files above to get started.')})));
     return;
   }
-  if (view === 'grid') {
-    root.replaceChildren(h('div',{class:'grid'}, list.map((f,i) => {
-      const k = kindOf(f), sel = selected.has(f.id);
-      return h('div',{class:'card k-'+k+(sel?' sel':''), onclick:()=>openViewer(list,i)},
-        h('div',{class:'thumb'}, thumb(f)),
-        extOf(f.name) ? h('span',{class:'ext',text:extOf(f.name).slice(0,5)}) : null,
-        h('div',{class:'pick',onclick:e=>toggleSel(f.id,e)}, ic('check')),
-        h('div',{class:'meta'}, h('div',{class:'name',title:f.name,text:f.name}),
-          h('div',{class:'sub',text:fmtBytes(f.size)+' · '+fmtWhen(f.created)})));
-    })));
-  } else {
+  const key = [view, filter, srcMode, sortBy, query].join('|');
+  if (key !== shownKey) { shownKey = key; shownN = CHUNK; } // a new view of the list starts from the top again
+  if (!HAS_IO) shownN = list.length;                        // very old browser: build everything, no fade
+  const fade = HAS_IO && !REDUCE;
+  root.classList.toggle('fx', fade);
+  if (fade) fadeIO = new IntersectionObserver(es => { for (const e of es) e.target.classList.toggle('in', e.isIntersecting); },
+    {rootMargin:'-24px 0px -24px 0px'});
+  let box;
+  if (view === 'grid') box = h('div',{class:'grid'});
+  else {
     const allSel = list.every(f => selected.has(f.id));
     const head = h('div',{class:'row head'},
       h('div',{class:'pick',title:'Select all',onclick:()=>{ list.forEach(f => allSel ? selected.delete(f.id) : selected.add(f.id)); render(); }}, ic('check')),
       h('div',{text:'Name'}), h('div',{class:'c',text:'Size'}), h('div',{class:'c type',text:'Type'}),
       h('div',{class:'c when',text:'Uploaded'}), h('div'));
     if (allSel) head.classList.add('sel');
-    root.replaceChildren(h('div',{class:'list'}, head, list.map((f,i) => {
-      const k = kindOf(f), sel = selected.has(f.id);
-      return h('div',{class:'row k-'+k+(sel?' sel':''), onclick:()=>openViewer(list,i)},
-        h('div',{class:'pick',onclick:e=>toggleSel(f.id,e)}, ic('check')),
-        h('div',{class:'nm'}, h('div',{class:'tile'}, ic(k)), h('div',{class:'name',title:f.name,text:f.name})),
-        h('div',{class:'c',text:fmtBytes(f.size)}),
-        h('div',{class:'c type',text:(extOf(f.name)||'file').toUpperCase()}),
-        h('div',{class:'c when',title:fmtFull(f.created),text:fmtWhen(f.created)}),
-        h('div',{class:'acts'},
-          h('button',{class:'btn ghost icon sm',title:'Download',onclick:e=>{ e.stopPropagation(); download(f); }}, ic('download')),
-          h('button',{class:'btn ghost icon sm',title:'Delete',onclick:e=>{ e.stopPropagation(); removeFiles([f]); }}, ic('trash'))));
-    })));
+    box = h('div',{class:'list'}, head);
+  }
+  let at = 0;
+  const fill = n => {
+    const end = Math.min(list.length, n), nodes = [];
+    for (; at < end; at++) nodes.push(buildItem(list[at], at, list));
+    box.append(...nodes);
+    if (fadeIO) nodes.forEach(x => fadeIO.observe(x));
+  };
+  fill(shownN);
+  root.replaceChildren(box);
+  if (HAS_IO && at < list.length) {
+    const end = h('div',{class:'sentinel'});
+    root.append(end);
+    moreIO = new IntersectionObserver(es => {
+      if (!es[0].isIntersecting) return;
+      shownN = Math.min(list.length, at + CHUNK); fill(shownN);
+      if (at >= list.length) { moreIO.disconnect(); end.remove(); }
+      else { moreIO.unobserve(end); moreIO.observe(end); } // still near the end (tall screen): check again
+    }, {rootMargin:'900px 0px'});
+    moreIO.observe(end);
   }
 }
 
@@ -561,27 +925,55 @@ function ask({title, body, input, ok='OK', danger=false}){
     if (inp) { inp.focus(); const dot = inp.value.lastIndexOf('.'); inp.setSelectionRange(0, dot > 0 ? dot : inp.value.length); }
   });
 }
+/* Esc fades the dialog out like every other way of closing it */
+for (const id of ['#dlg', '#viewer']) { const d = $(id); d.addEventListener('cancel', e => { e.preventDefault(); d.close(); }); }
 
 /* ---------- viewer ---------- */
-let vList = [], vIdx = 0, vToken = 0;
-function openViewer(list, i){ vList = list; vIdx = i; renderViewer(); if (!$('#viewer').open) $('#viewer').showModal(); }
-function stepViewer(d){ if (vList.length < 2) return; vIdx = (vIdx + d + vList.length) % vList.length; renderViewer(); }
+let vList = [], vIdx = 0, vToken = 0, vStep = 0;
+function openViewer(list, i){ clearTimeout(vStep); vStep = 0; vList = list; vIdx = i; renderViewer(); if (!$('#viewer').open) $('#viewer').showModal(); }
+/* Next / previous file: the picture on screen slides out, then the new one slides in from that side. */
+function stepViewer(d){
+  if (vList.length < 2) return;
+  vIdx = (vIdx + d + vList.length) % vList.length;
+  const st = $('#viewer .stage');
+  if (REDUCE || !st) { renderViewer(d); return; }
+  st.classList.remove('in-fwd', 'in-back');
+  st.classList.add(d > 0 ? 'out-fwd' : 'out-back');
+  clearTimeout(vStep);
+  vStep = setTimeout(() => { vStep = 0; renderViewer(d); }, 120); // quick presses in a row: only the last one is drawn
+}
 
-async function renderViewer(){
+async function renderViewer(dir){
   const f = vList[vIdx], k = kindOf(f), kind = previewOf(f), token = ++vToken;
   const v = $('#viewer');
-  const stage = h('div',{class:'stage k-'+k});
+  const stage = h('div',{class:'stage k-'+k+(dir && !REDUCE ? (dir > 0 ? ' in-fwd' : ' in-back') : '')});
   if (vList.length > 1) stage.append(
     h('button',{class:'navbtn l',title:'Previous (←)',onclick:()=>stepViewer(-1)}, ic('left')),
     h('button',{class:'navbtn r',title:'Next (→)',onclick:()=>stepViewer(1)}, ic('right')));
+  if (vList.length > 1) { // phone: swipe sideways to the next / previous file (not over things that scroll or play)
+    let sx = null, sy = 0, st = 0;
+    stage.addEventListener('touchstart', e => { if (e.touches.length === 1) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); } else sx = null; }, {passive:true});
+    stage.addEventListener('touchend', e => {
+      if (sx == null || !PHONE.matches || e.target.closest('.tbl,pre,video,audio,iframe,.navbtn')) { sx = null; return; }
+      const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy; sx = null;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - st < 600) stepViewer(dx < 0 ? 1 : -1);
+    }, {passive:true});
+  }
+  stage.addEventListener('click', e => { if (PHONE.matches && e.target.closest('img')) $('#viewer').classList.toggle('bare'); }); // tap the picture: hide / show the buttons
   const fallback = msg => { stage.querySelectorAll('.pv').forEach(e => e.remove()); stage.append(h('div',{class:'noprev pv'}, h('div',{class:'tile'}, ic(k)), h('div',{text:msg}))); };
 
-  if (kind === 'image') { const im = h('img',{class:'pv',alt:f.name,src:rawUrl(f)}); im.onerror = () => fallback("Your browser can't display this image type."); stage.append(im); }
-  else if (kind === 'video') { const vd = h('video',{class:'pv',controls:true,preload:'metadata',src:rawUrl(f)}); vd.onerror = () => fallback("Your browser can't play this video format. Download it instead."); stage.append(vd); }
+  if (kind === 'image') {
+    const im = h('img',{class:'pv',alt:f.name,src:rawUrl(f)});
+    im.onload = () => im.classList.add('ld'); // fades in once it has loaded
+    im.onerror = () => fallback("Your browser can't display this image type.");
+    if (im.complete && im.naturalWidth) im.classList.add('ld');
+    stage.append(im);
+  }
+  else if (kind === 'video') { const vd = h('video',{class:'pv fadein',controls:true,preload:'metadata',src:rawUrl(f)}); vd.onerror = () => fallback("Your browser can't play this video format. Download it instead."); stage.append(vd); }
   else if (kind === 'audio') { const a = h('audio',{class:'pv',controls:true,preload:'metadata',src:rawUrl(f),style:'width:min(520px,90%)'}); a.onerror = () => fallback("Your browser can't play this audio format."); stage.append(h('div',{class:'noprev'}, h('div',{class:'tile'}, ic(k)), a)); }
-  else if (kind === 'pdf') stage.append(h('iframe',{class:'pv',src:rawUrl(f),title:f.name}));
+  else if (kind === 'pdf') stage.append(h('iframe',{class:'pv fadein',src:rawUrl(f),title:f.name}));
   else if (kind === 'text' || kind === 'table') {
-    stage.append(h('div',{class:'noprev pv',text:'Loading…'}));
+    stage.append(h('div',{class:'loading pv'}, h('i')));
     loadText(f, kind, stage, token, fallback);
   } else fallback('No preview for this file type — you can still download it.');
 
@@ -589,6 +981,7 @@ async function renderViewer(){
     h('dl',{},
       h('div',{}, h('dt',{text:'Size'}), h('dd',{text:fmtBytes(f.size)+' ('+f.size.toLocaleString()+' bytes)'})),
       h('div',{}, h('dt',{text:'Type'}), h('dd',{text:f.mime})),
+      isWa(f) ? h('div',{}, h('dt',{text:'Source'}), h('dd',{text:'WhatsApp'})) : null,
       h('div',{}, h('dt',{text:'Uploaded'}), h('dd',{text:fmtFull(f.created)})),
       h('div',{}, h('dt',{text:'SHA-256 (click to copy)'}), h('dd',{class:'mono',text:f.sha256,onclick:async e=>{ try { await navigator.clipboard.writeText(f.sha256); toast('Checksum copied'); } catch { toast('Copy not available','err'); } }}))),
     h('div',{class:'btns'},
@@ -617,10 +1010,10 @@ async function loadText(f, kind, stage, token, fallback){
     let node;
     if (kind === 'table') {
       const rows = parseCSV(text, extOf(f.name)==='tsv' ? '\t' : ',', 300);
-      node = h('div',{class:'tbl pv'}, tableOf(rows));
+      node = h('div',{class:'tbl pv fadein'}, tableOf(rows));
     } else {
       if (!truncated && extOf(f.name) === 'json') { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch {} }
-      node = h('pre',{class:'pv',text});
+      node = h('pre',{class:'pv fadein',text});
     }
     stage.append(node);
     if (truncated) stage.append(h('div',{class:'note pv',text:'Showing the first '+fmtBytes(LIMIT)+' of '+fmtBytes(f.size)}));
@@ -648,7 +1041,7 @@ function tableOf(rows){
     h('tbody',{}, rows.slice(1).map((r,i) => h('tr',{}, h('td',{text:String(i+1)}), pad(r).map(c => h('td',{text:c,title:c}))))));
 }
 $('#viewer').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
-$('#viewer').addEventListener('close', () => { vToken++; $('#viewer').replaceChildren(); });
+$('#viewer').addEventListener('close', () => { vToken++; clearTimeout(vStep); vStep = 0; $('#viewer').classList.remove('bare'); $('#viewer').replaceChildren(); });
 
 /* ---------- uploads ---------- */
 const jobs = []; let jobSeq = 0, running = 0;
@@ -696,6 +1089,12 @@ function dismiss(j){
 }
 function cancel(j){ if (j.state==='uploading') j.xhr.abort(); else if (j.state==='queued') { j.state='cancelled'; dismiss(j); pump(); } }
 function retry(j){ j.state = 'queued'; j.loaded = 0; j.error = ''; paintJob(j); pump(); }
+function updateOverall(){
+  let tot = 0, got = 0;
+  for (const j of jobs) if (j.state !== 'cancelled') { tot += j.file.size; got += j.state === 'done' ? j.file.size : j.loaded; }
+  const active = jobs.some(j => j.state === 'queued' || j.state === 'uploading');
+  $('#upProg').style.width = (active && tot ? Math.round(got / tot * 100) : 100) + '%';
+}
 function paintJob(j){
   const pct = j.file.size ? Math.round(j.loaded / j.file.size * 100) : (j.state==='done' ? 100 : 0);
   let status;
@@ -713,6 +1112,7 @@ function paintJob(j){
       h('button',{class:'btn ghost icon sm',title: j.state==='uploading'||j.state==='queued' ? 'Cancel':'Dismiss',onclick:()=> (j.state==='uploading'||j.state==='queued') ? cancel(j) : dismiss(j)}, ic('x'))),
     j.state==='error' ? null : h('div',{class:'bar'}, h('i',{style:'width:'+pct+'%'})),
     h('div',{class:'s',text:status}));
+  updateOverall();
 }
 
 /* drag & drop (files and whole folders) */
@@ -752,7 +1152,7 @@ $('#loginForm').addEventListener('submit', async e => {
     $('#pw').value = ''; $('#login').hidden = true; await refresh();
   } catch (err) { $('#loginErr').textContent = err.message; }
 });
-$('#logout').addEventListener('click', async () => { await fetch('/api/logout', {method:'POST', credentials:'same-origin'}); files = []; stats = null; render(); showLogin(); });
+$('#logout').addEventListener('click', async () => { await fetch('/api/logout', {method:'POST', credentials:'same-origin'}); files = []; stats = null; firstPaint = true; render(); showLogin(); });
 
 /* ---------- wiring ---------- */
 function setTheme(t){ document.documentElement.dataset.theme = t; store.set('theme', t); $('#theme').replaceChildren(ic(t==='dark' ? 'sun' : 'moon')); }
@@ -760,11 +1160,19 @@ setTheme(store.get('theme', matchMedia('(prefers-color-scheme: dark)').matches ?
 $('#theme').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 
 $('#logo').append(ic('box')); $('#loginIcon').append(ic('lock')); $('#dropIcon').append(ic('upload'));
-$('#searchIcon').append(ic('search')); $('#ovIcon').append(ic('upload')); $('#logout').append(ic('logout'));
+$('#chatsBtn').prepend(ic('chat')); $('#searchIcon').append(ic('search')); $('#ovIcon').append(ic('upload')); $('#logout').append(ic('logout'));
+/* Chats slides in from the right. Plain link behaviour is kept for new-tab clicks and while uploads run (leaving stops them anyway). */
+$('#chatsBtn').addEventListener('click', e => {
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;
+  if (jobs.some(j => j.state==='uploading' || j.state==='queued')) return;
+  e.preventDefault(); goChats();
+});
 if (window.StashApp) { const b = $('#appBtn'); b.hidden = false; b.append(ic('sliders')); b.onclick = () => StashApp.openSettings(); }  // only inside the Android app
 $('#upClear').append(ic('x')); $('#upClear').onclick = () => jobs.slice().forEach(dismiss);
 $('#uploadBtn').append(ic('upload'), 'Upload');
 $('#vGrid').append(ic('grid')); $('#vList').append(ic('list'));
+$('#searchBtn').append(ic('search')); $('#searchX').append(ic('x')); $('#moreBtn').append(ic('more')); $('#viewBtn').append(ic('sliders')); $('#fab').append(ic('plus'));
+if (PHONE.matches) $('#q').placeholder = 'Search files';
 
 const pick = () => $('#picker').click();
 $('#uploadBtn').onclick = pick;
@@ -774,8 +1182,71 @@ $('#picker').onchange = e => { enqueue([...e.target.files]); e.target.value = ''
 $('#q').oninput = e => { query = e.target.value; renderBulk(); renderFiles(); };
 $('#sort').value = sortBy;
 $('#sort').onchange = e => { sortBy = e.target.value; store.set('sort', sortBy); renderFiles(); };
-$('#vGrid').onclick = () => { view = 'grid'; store.set('view', view); renderFiles(); };
-$('#vList').onclick = () => { view = 'list'; store.set('view', view); renderFiles(); };
+$('#srcSel').value = srcMode;
+$('#srcSel').onchange = e => setSrc(e.target.value);
+const setView = v => { view = v; store.set('view', view); renderFiles(); };
+$('#vGrid').onclick = () => setView('grid');
+$('#vList').onclick = () => setView('list');
+
+/* ---------- phone controls ---------- */
+const hdr = $('header.top');
+const SOURCES = [['all','All files'],['wa','WhatsApp only'],['other','Hide WhatsApp']];
+const SORTS = [['new','Newest first'],['old','Oldest first'],['az','Name A–Z'],['za','Name Z–A'],['big','Largest first'],['small','Smallest first']];
+function closeMenu(){ $('#menu').hidden = true; $('#menuShade').hidden = true; }
+function openMenu(anchor, items){
+  const m = $('#menu');
+  m.replaceChildren(...items.map(it => it.head ? h('div',{class:'hd',text:it.head}) :
+    h('button',{type:'button',role:'menuitem',class:it.on?'on':'',style:it.danger?'color:var(--danger)':null,onclick:()=>{ closeMenu(); it.run(); }},
+      it.icon ? ic(it.icon) : null, it.label, it.on ? h('span',{class:'chk'}, ic('check')) : null)));
+  m.hidden = false; $('#menuShade').hidden = false;
+  const r = anchor.getBoundingClientRect();
+  m.style.top = Math.max(8, Math.min(r.bottom + 6, innerHeight - m.offsetHeight - 8)) + 'px';
+  m.style.right = Math.max(8, innerWidth - r.right) + 'px';
+}
+$('#menuShade').onclick = closeMenu;
+$('#viewBtn').onclick = e => openMenu(e.currentTarget, [
+  {head:'View'},
+  {label:'Grid', icon:'grid', on:view==='grid', run:() => setView('grid')},
+  {label:'List', icon:'list', on:view==='list', run:() => setView('list')},
+  {head:'Sort'},
+  ...SORTS.map(([k,l]) => ({label:l, on:sortBy===k, run:() => { sortBy = k; store.set('sort', k); $('#sort').value = k; renderFiles(); }})),
+  ...(hasWa ? [{head:'Show'}, ...SOURCES.map(([k,l]) => ({label:l, on:srcMode===k, run:() => setSrc(k)}))] : [])]);
+$('#moreBtn').onclick = e => {
+  const dark = document.documentElement.dataset.theme === 'dark', items = [];
+  if (window.StashApp) items.push({label:'Phone backup & settings', icon:'sliders', run:() => StashApp.openSettings()});
+  items.push({label: dark ? 'Light mode' : 'Dark mode', icon: dark ? 'sun' : 'moon', run:() => $('#theme').click()});
+  if (!$('#logout').hidden) items.push({label:'Log out', icon:'logout', run:() => $('#logout').click()});
+  openMenu(e.currentTarget, items);
+};
+$('#searchBtn').onclick = () => { hdr.classList.add('searching'); $('#q').focus(); };
+$('#searchX').onclick = () => { $('#q').value = ''; query = ''; hdr.classList.remove('searching'); renderBulk(); renderFiles(); };
+$('#fab').onclick = () => $('#picker').click();
+$('#uploads > header').addEventListener('click', e => { if (PHONE.matches && !e.target.closest('#upClear')) $('#uploads').classList.toggle('open'); });
+PHONE.addEventListener('change', () => { closeMenu(); hdr.classList.remove('searching'); render(); });
+
+/* long press selects a file (then a tap adds or removes more). A tap alone opens it. */
+let lp = null, lpSwallow = false;
+const lpEnd = () => { if (lp) { clearTimeout(lp.timer); lp = null; } };
+$('#files').addEventListener('touchstart', e => {
+  lpSwallow = false; lpEnd();
+  if (!PHONE.matches || e.touches.length !== 1) return;
+  const t = e.target.closest('[data-id]'); if (!t) return;
+  const id = t.dataset.id, x = e.touches[0].clientX, y = e.touches[0].clientY;
+  lp = {x, y, timer: setTimeout(() => { lp = null; lpSwallow = true; try { navigator.vibrate && navigator.vibrate(12); } catch {} toggleSel(id); }, 420)};
+}, {passive:true});
+$('#files').addEventListener('touchmove', e => { if (lp && (Math.abs(e.touches[0].clientX - lp.x) > 10 || Math.abs(e.touches[0].clientY - lp.y) > 10)) lpEnd(); }, {passive:true});
+$('#files').addEventListener('touchend', lpEnd, {passive:true});
+$('#files').addEventListener('touchcancel', lpEnd, {passive:true});
+$('#files').addEventListener('click', e => { if (lpSwallow) { lpSwallow = false; e.stopPropagation(); e.preventDefault(); } }, true); // the lift after a long press is not a tap
+$('#files').addEventListener('contextmenu', e => { if (PHONE.matches) e.preventDefault(); });
+
+/* The Android app's Back button / gesture asks this first: close what is open on the page, one thing per press. */
+window.stashBack = function () {
+  if (!$('#menu').hidden) { closeMenu(); return true; }
+  if (hdr.classList.contains('searching')) { $('#searchX').click(); return true; }
+  if (selected.size) { selected.clear(); render(); return true; }
+  return false;
+};
 
 addEventListener('keydown', e => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
@@ -783,17 +1254,21 @@ addEventListener('keydown', e => {
     if (e.key === 'ArrowLeft') { stepViewer(-1); e.preventDefault(); }
     if (e.key === 'ArrowRight') { stepViewer(1); e.preventDefault(); }
   } else if (e.key === '/' && !typing) { e.preventDefault(); $('#q').focus(); }
-  else if (e.key === 'Escape' && document.activeElement === $('#q')) { $('#q').value = ''; query = ''; $('#q').blur(); renderFiles(); }
+  else if (e.key === 'Escape' && document.activeElement === $('#q')) { $('#q').value = ''; query = ''; $('#q').blur(); hdr.classList.remove('searching'); renderFiles(); }
 });
 
 (async function boot(){
   try {
-    const s = await (await fetch('/api/session', {credentials:'same-origin'})).json();
+    const wait = afterSlide();
+    busy(1);
+    let s;
+    try { s = await (await fetch('/api/session', {credentials:'same-origin'})).json(); } finally { busy(-1); }
     maxBytes = s.maxBytes; authRequired = s.authRequired;
     $('#logout').hidden = !authRequired;
     if (authRequired && !s.authed) { showLogin(); return; }
-    await refresh();
+    await refresh(wait);
   } catch { toast("Can't reach the server",'err'); }
+  finally { hideSplash(); }
 })();
 </script>
 </body>

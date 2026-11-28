@@ -21,6 +21,7 @@ Keep reports short: a few lines per section, no essays. Be honest about what is 
 - Update docs (`README.md`, `API.md`, `TESTING.md`, architecture diagrams) so they match the code.
 - Add an entry to `CHANGELOG.md` for every change that engineers or testers report.
 - Keep `TASKS.md` current.
+- Untested items live in two places on purpose: `TESTING.md` is the lasting list, and the `TASKS.md` handoff only holds what the latest reports added, plus a pointer to `TESTING.md`. Don't copy the whole list into the handoff. Details are in `REPORTS.MD` (Scribe rules).
 - Scribes do not change code.
 - they mainly proofread documents and code, but they do not test them, thats for the tester, and testers should also do more than just testing like intentionally finding bugs
 - and if you noticed, that both scribes and testers write problems in their reports, but keep in mind that scribes strictly fact check the code and not test them, and also it would be nice if the scribe also would categorize the bugs found from big to small like how tester does it
@@ -51,7 +52,7 @@ The AI cannot see its token limit, so it must not leave work only half delivered
 
 ## 6. Report layout
 
-Follow the report layout for your assigned role. The layouts live in [`REPORTS.md`](REPORTS.md).
+Follow the report layout for your assigned role. The layouts live in [`REPORTS.MD`](REPORTS.MD).
 
 ## 7. File location header
 

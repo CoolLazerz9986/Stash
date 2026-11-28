@@ -1,4 +1,4 @@
-# REPORTS.md
+# REPORTS.MD
 
 Report layout for each role. Find your assigned role and follow its layout.
 
@@ -37,7 +37,7 @@ Cover these three parts:
 
 - **Tested:** what you ran or checked
 - **Results:** what happened (pass / fail, numbers, output)
-- **Problems:** anything wrong, each tagged with a severity:
+- **Bugs:** anything wrong, each tagged with a severity:
   - **minor:** cosmetic or rare, nothing breaks
   - **normal:** a real bug with a workaround, or a clear annoyance
   - **critical:** data loss, security hole, crash, or the feature does not work
@@ -168,4 +168,4 @@ Tasks for everyone: engineers, testers and scribes.
 - Every `CHANGELOG.md` entry comes from an engineer or tester report. Do not invent changes.
 - If a report is missing a part, ask for it instead of guessing.
 - Put problems from reports under **Open problems (Bugs)**, with the details under **Context**.
-- Put untested items from reports under **Handoff, Untested**.
+- Put untested items from reports under **Handoff, Untested**, but only the new ones from the latest reports. `TESTING.md` ("What is NOT tested") is the one lasting list of everything untested: add each item there too, and end the handoff with a pointer to it instead of copying the list. Remove an item from the handoff once it has been checked; it stays in `TESTING.md` only while it is still untested. If nothing new is untested, write `-` plus the pointer.

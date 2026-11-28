@@ -7,9 +7,10 @@ import android.database.sqlite.SQLiteOpenHelper
 /**
  * Remembers which phone files are already safe on the server, so a backup run only touches new/changed files.
  * Key = MediaStore content URI; a row only counts while size + modified time still match.
- * status: "uploaded" (we sent it), "present" (server already had identical bytes), "skipped" (empty / over the size limit).
+ * status: "uploaded" (we sent it), "present" (server already had identical bytes), "skipped" (empty file).
+ * Files over the server's size limit are NOT recorded, so they are tried again once the limit is raised.
  */
-class BackupDb(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "backup.db", null, 1) {
+class BackupDb(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "backup.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE items (
@@ -18,7 +19,11 @@ class BackupDb(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "backup.
         )
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        // v1 also stored over-limit files as "skipped" and never looked at them again. Forget every skipped row once:
+        // empty files are skipped again at once, over-limit files are retried if the server limit has been raised.
+        if (oldVersion < 2) db.execSQL("DELETE FROM items WHERE status = 'skipped'")
+    }
 
     fun isDone(uri: String, size: Long, modified: Long): Boolean =
         readableDatabase.rawQuery(
