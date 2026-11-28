@@ -19,9 +19,12 @@ class Prefs(ctx: Context) {
         get() = sp.getString("apiKey", "") ?: ""
         set(v) = sp.edit().putString("apiKey", v).apply()
 
-    var backupEnabled: Boolean
-        get() = sp.getBoolean("backupEnabled", false)
-        set(v) = sp.edit().putBoolean("backupEnabled", v).apply()
+    /** Hours between phone backups; 0 = off. Older versions only had an on/off switch (on meant hourly). */
+    var backupHours: Int
+        get() = sp.getInt("backupHours", if (sp.getBoolean("backupEnabled", false)) 1 else 0)
+        set(v) = sp.edit().putInt("backupHours", v).apply()
+
+    val backupEnabled: Boolean get() = backupHours > 0
 
     var wifiOnly: Boolean
         get() = sp.getBoolean("wifiOnly", true)
@@ -31,23 +34,25 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("chargingOnly", false)
         set(v) = sp.edit().putBoolean("chargingOnly", v).apply()
 
-    var includePhotos: Boolean
-        get() = sp.getBoolean("includePhotos", true)
-        set(v) = sp.edit().putBoolean("includePhotos", v).apply()
-
-    var includeVideos: Boolean
-        get() = sp.getBoolean("includeVideos", true)
-        set(v) = sp.edit().putBoolean("includeVideos", v).apply()
-
     /** false = only back up files added after backup was switched on. */
     var includeExisting: Boolean
         get() = sp.getBoolean("includeExisting", true)
         set(v) = sp.edit().putBoolean("includeExisting", v).apply()
 
-    /** Folder (MediaStore bucket) names to back up. Empty = all folders. */
-    var buckets: Set<String>
-        get() = sp.getStringSet("buckets", emptySet())?.toSet() ?: emptySet()
-        set(v) = sp.edit().putStringSet("buckets", v.toSet()).apply()
+    /** Folders picked for phone backup (persisted content:// tree URIs). */
+    var fileTrees: Set<String>
+        get() = sp.getStringSet("fileTrees", emptySet())?.toSet() ?: emptySet()
+        set(v) = sp.edit().putStringSet("fileTrees", v.toSet()).apply()
+
+    /** Names of the [FileFilter.Type]s that are switched off. */
+    var offTypes: Set<String>
+        get() = sp.getStringSet("offTypes", emptySet())?.toSet() ?: emptySet()
+        set(v) = sp.edit().putStringSet("offTypes", v.toSet()).apply()
+
+    /** Extensions never backed up, as typed ("tmp, log"). */
+    var excludedExtensions: String
+        get() = sp.getString("excludedExtensions", "") ?: ""
+        set(v) = sp.edit().putString("excludedExtensions", v).apply()
 
     var enabledSince: Long
         get() = sp.getLong("enabledSince", 0L)

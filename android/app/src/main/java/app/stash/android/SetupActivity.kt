@@ -91,7 +91,7 @@ class SetupActivity : ComponentActivity() {
             if (old.isNotEmpty()) { finish(); return }
         } else if (old.isNotEmpty()) {
             // A different server knows nothing about what was backed up to the old one: start clean, ask to reconnect.
-            prefs.backupEnabled = false
+            prefs.backupHours = 0
             prefs.apiKey = ""
             BackupDb(this).clear()
             BackupScheduler.apply(this)

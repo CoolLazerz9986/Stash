@@ -60,8 +60,8 @@ object BackupScheduler {
         }
     }
 
-    /** (Re)schedules the hourly job, or cancels everything when backup is switched off. */
-    fun apply(ctx: Context) {
+    /** (Re)schedules the periodic job, or cancels everything when the schedule is Off. */
+    fun apply(ctx: Context, delayFirstRun: Boolean = false) {
         val p = Prefs(ctx)
         val wm = WorkManager.getInstance(ctx)
         if (!p.backupEnabled) {
@@ -69,15 +69,24 @@ object BackupScheduler {
             wm.cancelUniqueWork(NOW)
             return
         }
-        val request = PeriodicWorkRequestBuilder<BackupWorker>(1, TimeUnit.HOURS)
+        val request = PeriodicWorkRequestBuilder<BackupWorker>(p.backupHours.toLong(), TimeUnit.HOURS)
             .setConstraints(constraints(p, p.chargingOnly))
+            .apply { if (delayFirstRun) setInitialDelay(p.backupHours.toLong(), TimeUnit.HOURS) }
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.MINUTES)
             .build()
         wm.enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
         noteWifiWait(ctx)
     }
 
-    /** "Back up now": runs as soon as the network rule is met (ignores the charging rule, you asked for it). */
+    /** Stops the phone backup that is running or queued. The schedule stays on: next run one interval from now. */
+    fun cancelRun(ctx: Context) {
+        val wm = WorkManager.getInstance(ctx)
+        wm.cancelUniqueWork(NOW)
+        wm.cancelUniqueWork(PERIODIC)
+        apply(ctx, delayFirstRun = true)
+    }
+
+    /** A one-off run (when backup is switched on or a folder is added): runs as soon as the network rule is met (ignores the charging rule, you asked for it). */
     fun runNow(ctx: Context) {
         val p = Prefs(ctx)
         val request = OneTimeWorkRequestBuilder<BackupWorker>()

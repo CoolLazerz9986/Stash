@@ -27,8 +27,11 @@ class BackupActivity : ComponentActivity() {
     private lateinit var db: BackupDb
     private lateinit var serverText: TextView
     private lateinit var statusText: TextView
-    private lateinit var enableSwitch: Switch
+    private lateinit var scheduleButton: android.widget.Button
     private lateinit var foldersButton: android.widget.Button
+    private lateinit var typesButton: android.widget.Button
+    private lateinit var excludeButton: android.widget.Button
+    private lateinit var cancelButton: android.widget.Button
     private lateinit var chatSwitch: Switch
     private lateinit var chatKeyField: EditText
     private lateinit var chatFolderButton: android.widget.Button
@@ -38,17 +41,22 @@ class BackupActivity : ComponentActivity() {
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> runOnUiThread { refresh() } }
 
-    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        if (Perms.hasMedia(this)) {
-            enable()
-        } else {
-            toast("Photo access is needed to back up your photos and videos")
+    /** Only asks for the notification permission (progress and problem alerts). Chat backup works without it. */
+    private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    /** Adds a folder to phone backup. */
+    private val backupFolderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                prefs.fileTrees = prefs.fileTrees + uri.toString()
+                if (prefs.backupEnabled) BackupScheduler.runNow(this)
+            } catch (e: SecurityException) {
+                toast("Could not keep access to that folder: ${e.message}")
+            }
             refresh()
         }
     }
-
-    /** Only asks for the notification permission (progress and problem alerts). Chat backup works without it. */
-    private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     /** System folder picker: gives read access to one folder tree without any storage permission. */
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -71,10 +79,11 @@ class BackupActivity : ComponentActivity() {
 
         serverText = Ui.body(this)
         statusText = Ui.body(this)
-        enableSwitch = Ui.toggle(this, "Back up this phone to Stash", prefs.backupEnabled) { on ->
-            if (!updating) if (on) turnOn() else turnOff()
-        }
+        scheduleButton = Ui.button(this, "") { chooseSchedule() }
         foldersButton = Ui.button(this, "") { chooseFolders() }
+        typesButton = Ui.button(this, "") { chooseTypes() }
+        excludeButton = Ui.button(this, "") { chooseExclusions() }
+        cancelButton = Ui.button(this, "Cancel current backup", Ui.Kind.DANGER) { cancelBackup() }
 
         // Same layout idea as the website: grey page, one rounded card per group.
         val serverCard = Ui.card(
@@ -83,30 +92,25 @@ class BackupActivity : ComponentActivity() {
             Ui.button(this, "Change server") { startActivity(Intent(this, SetupActivity::class.java)) },
             Ui.gap(this, 4),
         )
-        val scheduleCard = Ui.card(
+        val backupCard = Ui.card(
             this,
-            enableSwitch,
-            Ui.toggle(this, "Wi-Fi only", prefs.wifiOnly) { prefs.wifiOnly = it; BackupScheduler.apply(this); BackupScheduler.applyChat(this) },
-            Ui.toggle(this, "Only while charging", prefs.chargingOnly) { prefs.chargingOnly = it; BackupScheduler.apply(this); BackupScheduler.applyChat(this) },
-        )
-        val contentCard = Ui.card(
-            this,
-            Ui.toggle(this, "Back up photos", prefs.includePhotos) { prefs.includePhotos = it },
-            Ui.toggle(this, "Back up videos", prefs.includeVideos) { prefs.includeVideos = it },
-            Ui.toggle(this, "Include files already on this phone", prefs.includeExisting) { prefs.includeExisting = it },
+            heading("Backup settings"),
+            scheduleButton,
             foldersButton,
-            Ui.gap(this, 4),
-        )
-        val statusCard = Ui.card(
-            this,
+            typesButton,
+            excludeButton,
+            Ui.toggle(this, "Include files already in these folders", prefs.includeExisting) { prefs.includeExisting = it },
+            Ui.toggle(this, "Wi-Fi only", prefs.wifiOnly) { prefs.wifiOnly = it; applyRules() },
+            Ui.toggle(this, "Only while charging", prefs.chargingOnly) { prefs.chargingOnly = it; applyRules() },
+            Ui.muted(this, "Wi-Fi and charging rules also apply to chat backup."),
             statusText,
-            Ui.button(this, "Back up now", Ui.Kind.PRIMARY) { backupNow() },
+            cancelButton,
             Ui.gap(this, 4),
         )
         val note = Ui.muted(
             this,
             "Backup is one-way: nothing is ever deleted from your phone. Files the server already has (same content) are skipped. " +
-                "It runs about once an hour in the background. If it says the key was rejected, switch backup off and on again while logged in.",
+                "Hidden files are left out. Times are approximate: Android may delay a run.",
         )
 
         // ---- WhatsApp chats (first version, plain on purpose: the screen will be restyled later) ----
@@ -149,8 +153,8 @@ class BackupActivity : ComponentActivity() {
         setContentView(
             SwipeBackLayout(this, Ui.page(
                 this,
-                Ui.header(this, "Phone backup", "Photos, videos and WhatsApp chats to your Stash"),
-                serverCard, scheduleCard, contentCard, statusCard, note, chatCard,
+                Ui.header(this, "Phone backup", "Files and WhatsApp chats to your Stash"),
+                serverCard, backupCard, note, chatCard,
             ))
         )
     }
@@ -209,11 +213,17 @@ class BackupActivity : ComponentActivity() {
     private fun refresh() {
         BackupScheduler.noteWifiWait(this) // only touches an empty / idle / already-"Waiting for Wi-Fi" status
         updating = true
-        enableSwitch.isChecked = prefs.backupEnabled
         chatSwitch.isChecked = prefs.chatEnabled
         updating = false
         serverText.text = "Server: ${prefs.serverUrl}"
-        foldersButton.text = "Folders: " + if (prefs.buckets.isEmpty()) "all" else prefs.buckets.sorted().joinToString(", ")
+        scheduleButton.text = "Backup schedule: " + scheduleLabel(prefs.backupHours)
+        val folders = prefs.fileTrees
+        foldersButton.text = "Folders: " + if (folders.isEmpty()) "none chosen" else folders.map { treeName(it) }.sorted().joinToString(", ")
+        val off = FileFilter.Type.values().count { it.name in prefs.offTypes }
+        typesButton.text = "File types: " + if (off == 0) "all" else "${FileFilter.Type.values().size - off} of ${FileFilter.Type.values().size}"
+        excludeButton.text = "Excluded extensions: " +
+            FileFilter.parseExtensions(prefs.excludedExtensions).joinToString(", ").ifEmpty { "none" }
+        cancelButton.isEnabled = prefs.backupEnabled
         statusText.text = buildString {
             append("Status: ").append(prefs.status.ifEmpty { if (prefs.backupEnabled) "Waiting for the next run" else "Off" })
             if (prefs.lastRun > 0) append("\nLast finished: ").append(DateFormat.getDateTimeInstance().format(Date(prefs.lastRun)))
@@ -231,15 +241,52 @@ class BackupActivity : ComponentActivity() {
     private fun folderLabel(): String =
         android.net.Uri.decode(prefs.chatTree).substringAfterLast(':').substringAfterLast('/').ifEmpty { "chosen" }
 
-    private fun turnOff() {
-        prefs.backupEnabled = false
+    private fun heading(text: String) = Ui.body(this, text).apply { setTypeface(typeface, android.graphics.Typeface.BOLD) }
+
+    private fun applyRules() {
         BackupScheduler.apply(this)
-        prefs.status = "Off"
-        refresh()
+        BackupScheduler.applyChat(this)
     }
 
-    private fun turnOn() {
-        if (Perms.hasMedia(this)) enable() else permissions.launch(Perms.requestList())
+    private fun scheduleLabel(hours: Int) = when (hours) {
+        0 -> "Off"
+        1 -> "Every hour"
+        else -> "Every $hours hours"
+    }
+
+    private fun chooseSchedule() {
+        val hours = intArrayOf(0, 1, 6, 12, 24)
+        val labels = Array(hours.size) { scheduleLabel(hours[it]) }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Backup schedule")
+            .setSingleChoiceItems(labels, hours.indexOf(prefs.backupHours)) { d, which ->
+                d.dismiss()
+                setSchedule(hours[which])
+            }
+            .setNegativeButton("Close", null)
+            .show()
+        Ui.styleDialog(dialog)
+    }
+
+    private fun setSchedule(hours: Int) {
+        if (hours == 0) {
+            prefs.backupHours = 0
+            BackupScheduler.apply(this)
+            prefs.status = "Off"
+            refresh()
+        } else if (prefs.backupEnabled) {
+            prefs.backupHours = hours
+            BackupScheduler.apply(this)
+            refresh()
+        } else {
+            enable(hours)
+        }
+    }
+
+    private fun cancelBackup() {
+        BackupScheduler.cancelRun(this)
+        prefs.status = "Cancelled. The schedule stays on; uploaded files are kept."
+        refresh()
     }
 
     /**
@@ -261,14 +308,19 @@ class BackupActivity : ComponentActivity() {
     }
 
     /** Connects to the server (fetching the API key through the website login) and starts the schedule. */
-    private fun enable() {
+    private fun enable(hours: Int) {
+        if (prefs.fileTrees.isEmpty()) {
+            toast("Choose at least one folder first")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 && !Perms.canNotify(this)) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         prefs.status = "Connecting…"
         Thread {
             try {
                 connect()
                 runOnUiThread {
                     prefs.enabledSince = System.currentTimeMillis()
-                    prefs.backupEnabled = true
+                    prefs.backupHours = hours
                     prefs.status = "Starting…"
                     BackupScheduler.apply(this)
                     BackupScheduler.runNow(this)
@@ -277,22 +329,13 @@ class BackupActivity : ComponentActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    prefs.backupEnabled = false
+                    prefs.backupHours = 0
                     prefs.status = "Off"
                     toast(e.message ?: "Could not connect")
                     refresh()
                 }
             }
         }.start()
-    }
-
-    private fun backupNow() {
-        if (!prefs.backupEnabled) {
-            toast("Switch backup on first")
-            return
-        }
-        BackupScheduler.runNow(this)
-        queued("Backup")
     }
 
     // ---- WhatsApp chats ----
@@ -394,36 +437,69 @@ class BackupActivity : ComponentActivity() {
         toast("Stopped. Nothing was deleted.")
     }
 
+    /** "primary:Documents/Work" -> "Work" */
+    private fun treeName(tree: String): String =
+        android.net.Uri.decode(tree).substringAfterLast(':').substringAfterLast('/').ifEmpty { "Storage root" }
+
+    /** Lists the chosen folders: tap one to remove it, or add another. */
     private fun chooseFolders() {
-        if (!Perms.hasMedia(this)) {
-            toast("Switch backup on first so the app can see your photo folders")
-            return
-        }
-        Thread {
-            val names = MediaSource.buckets(this).toList()
-            runOnUiThread {
-                if (isFinishing) return@runOnUiThread
-                if (names.isEmpty()) {
-                    toast("No photo or video folders found")
-                    return@runOnUiThread
-                }
-                val checked = BooleanArray(names.size) { names[it] in prefs.buckets }
-                val dialog = AlertDialog.Builder(this)
-                    .setTitle("Folders to back up")
-                    .setMultiChoiceItems(names.toTypedArray(), checked) { _, index, isChecked -> checked[index] = isChecked }
-                    .setPositiveButton("Save") { _, _ ->
-                        prefs.buckets = names.filterIndexed { i, _ -> checked[i] }.toSet()
-                        refresh()
-                    }
-                    .setNeutralButton("All folders") { _, _ ->
-                        prefs.buckets = emptySet()
-                        refresh()
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
-                Ui.styleDialog(dialog)
+        val trees = prefs.fileTrees.sortedBy { treeName(it) }
+        val labels = Array(trees.size) { "✕  " + android.net.Uri.decode(trees[it]).substringAfterLast("/tree/") }
+        val builder = AlertDialog.Builder(this)
+            .setTitle(if (trees.isEmpty()) "No folders chosen yet" else "Folders (tap to remove)")
+            .setPositiveButton("Add folder") { _, _ -> backupFolderPicker.launch(null) }
+            .setNegativeButton("Close", null)
+        if (trees.isNotEmpty()) builder.setItems(labels) { _, which -> removeFolder(trees[which]) }
+        Ui.styleDialog(builder.show())
+    }
+
+    private fun removeFolder(tree: String) {
+        prefs.fileTrees = prefs.fileTrees - tree
+        if (tree != prefs.chatTree) { // chat backup may be using the same folder
+            try {
+                contentResolver.releasePersistableUriPermission(android.net.Uri.parse(tree), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (e: SecurityException) {
+                // the access was already gone
             }
-        }.start()
+        }
+        refresh()
+    }
+
+    private fun chooseTypes() {
+        val types = FileFilter.Type.values()
+        val checked = BooleanArray(types.size) { types[it].name !in prefs.offTypes }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("File types to include")
+            .setMultiChoiceItems(Array(types.size) { types[it].label }, checked) { _, i, on -> checked[i] = on }
+            .setPositiveButton("Save") { _, _ ->
+                prefs.offTypes = types.filterIndexed { i, _ -> !checked[i] }.map { it.name }.toSet()
+                refresh()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+        Ui.styleDialog(dialog)
+    }
+
+    private fun chooseExclusions() {
+        val field = Ui.field(this, "e.g. tmp, log, iso").apply {
+            setText(prefs.excludedExtensions)
+            setSingleLine(true)
+        }
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(dp(20), 0, dp(20), 0)
+            addView(field)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Exclude extensions")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                prefs.excludedExtensions = field.text.toString().trim()
+                refresh()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+        Ui.styleDialog(dialog)
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()

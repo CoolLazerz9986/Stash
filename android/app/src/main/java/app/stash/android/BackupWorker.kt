@@ -4,7 +4,6 @@ package app.stash.android
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.net.Uri
-import android.provider.MediaStore
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
@@ -38,7 +37,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
     private var foreground = false // setForeground worked, so the notification may be refreshed
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        // the hourly job and "Back up now" must never run side by side (they would upload the same file twice)
+        // the periodic job and a one-off run must never overlap (they would upload the same file twice)
         if (!RUNNING.compareAndSet(false, true)) return@withContext Result.success()
         try {
             backup()
@@ -49,7 +48,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
 
     private suspend fun backup(): Result {
         if (!prefs.backupEnabled || prefs.serverUrl.isEmpty()) return Result.success()
-        if (!Perms.hasMedia(applicationContext)) return stop("Photo access was not granted", alert = true)
+        if (prefs.fileTrees.isEmpty()) return stop("Choose at least one folder to back up")
 
         val base = prefs.serverUrl
         val session = try {
@@ -60,12 +59,20 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         }
         if (session.api < 2) return stop("The server needs the updated server.py")
         if (session.authRequired && prefs.apiKey.isEmpty()) {
-            return stop("Not connected: switch backup off and on again while logged in", alert = true)
+            return stop("Not connected: set the schedule to Off, then pick it again while logged in", alert = true)
         }
         val limit = session.maxBytes
 
-        prefs.status = "Looking for new photos and videos…"
-        val todo = MediaSource.list(applicationContext, prefs).filter { !db.isDone(it.uri.toString(), it.size, it.modified) }
+        prefs.status = "Looking for new files…"
+        val todo = try {
+            FileSource.list(applicationContext, prefs) { isStopped }.filter { !db.isDone(it.uri.toString(), it.size, it.modified) }
+        } catch (e: UploadCancelled) {
+            return Result.retry()
+        } catch (e: SecurityException) {
+            return stop("Access to a folder was lost. Remove it and add it again.", alert = true)
+        } catch (e: Exception) {
+            return stop("Can't read a backup folder: ${e.message}")
+        }
         if (todo.isEmpty()) return finish(0, 0, 0, 0, 0, limit, "")
 
         var uploaded = 0
@@ -85,7 +92,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
                 if (bytes == 0L) {
                     db.mark(key, item.size, item.modified, sha, "skipped"); skipped++; continue
                 }
-                if (limit in 1 until bytes) { // the file grew after MediaStore reported its size
+                if (limit in 1 until bytes) { // the file grew after the folder reported its size
                     tooBig++; continue
                 }
                 if (StashApi.exists(base, prefs.apiKey, sha)) {
@@ -105,7 +112,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
                 failed++; lastProblem = "${item.name}: ${e.message}"
             } catch (e: StashApi.ApiException) {
                 when (e.status) {
-                    401, 403 -> return stop("The server rejected the key: switch backup off and on again", alert = true)
+                    401, 403 -> return stop("The server rejected the key: set the schedule to Off, then pick it again", alert = true)
                     429 -> { prefs.status = "The server is rate limiting this phone. Will retry."; return Result.retry() }
                     507 -> return stop("The server's disk is full", alert = true)
                     413 -> tooBig++ // not recorded: tried again next run, in case the limit was raised meanwhile
@@ -157,16 +164,12 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         }
     }
 
-    private fun open(uri: Uri): InputStream {
-        try {
-            // ask for the original bytes (with GPS data), otherwise Android hands us a redacted copy
-            val u = if (Perms.hasMediaLocation(applicationContext)) MediaStore.setRequireOriginal(uri) else uri
-            return applicationContext.contentResolver.openInputStream(u) ?: throw SourceException("could not open the file")
-        } catch (e: SourceException) {
-            throw e
-        } catch (e: Exception) {
-            throw SourceException(e.message ?: "could not open the file")
-        }
+    private fun open(uri: Uri): InputStream = try {
+        applicationContext.contentResolver.openInputStream(uri) ?: throw SourceException("could not open the file")
+    } catch (e: SourceException) {
+        throw e
+    } catch (e: Exception) {
+        throw SourceException(e.message ?: "could not open the file")
     }
 
     /** SHA-256 and exact byte count of what we will upload. */
@@ -198,6 +201,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
 
     /** [pct] = overall progress of the run, 0..100. */
     private suspend fun progress(text: String, pct: Int) {
+        if (isStopped) return // a cancelled run must not overwrite the "Cancelled" status
         prefs.status = text
         try {
             setForeground(info(text, pct))
@@ -209,7 +213,8 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         }
     }
 
-    private fun tick(item: MediaItem, sent: Long, total: Long, index: Int, count: Int) {
+    private fun tick(item: BackupFile, sent: Long, total: Long, index: Int, count: Int) {
+        if (isStopped) return
         val now = System.currentTimeMillis()
         if (now - lastTick < 1000) return
         lastTick = now
