@@ -1,11 +1,7 @@
+// Path: android/app/src/main/java/app/stash/android/BackupWorker.kt
 package app.stash.android
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.provider.MediaStore
@@ -32,11 +28,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Files bigger than the server's upload limit are counted ("too big") but never recorded in [BackupDb], so they are
  * picked up automatically once the limit is raised. They are detected from the MediaStore size before hashing,
  * so an hourly run does not re-read them.
+ *
+ * Notifications (progress with a real percentage, problems) are built by [Notify].
  */
 class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     private val prefs = Prefs(applicationContext)
     private val db = BackupDb(applicationContext)
     private var lastTick = 0L
+    private var foreground = false // setForeground worked, so the notification may be refreshed
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         // the hourly job and "Back up now" must never run side by side (they would upload the same file twice)
@@ -79,7 +78,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
             if (isStopped) return Result.retry()
             // over the server limit: count it, do not hash it, do not record it (retried after the limit is raised)
             if (limit > 0 && item.size > limit) { tooBig++; continue }
-            progress("Backing up ${i + 1} of ${todo.size}: ${item.name}", i, todo.size)
+            progress("Backing up ${i + 1} of ${todo.size}: ${item.name}", i * 100 / todo.size)
             val key = item.uri.toString()
             try {
                 val (sha, bytes) = hash(item.uri)
@@ -137,13 +136,13 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         prefs.lastRun = System.currentTimeMillis()
         prefs.status = (if (parts.isEmpty()) "Everything is backed up" else parts.joinToString(", ")) +
             (if (lastProblem.isNotEmpty()) ". Last problem: $lastProblem" else "")
-        applicationContext.getSystemService(NotificationManager::class.java).cancel(NOTIF_ALERT)
+        Notify.clear(applicationContext, NOTIF_ALERT)
         return Result.success()
     }
 
     private fun stop(message: String, alert: Boolean = false): Result {
         prefs.status = message
-        if (alert) alert(message)
+        if (alert) Notify.alert(applicationContext, NOTIF_ALERT, "Stash backup needs attention", message)
         return Result.failure()
     }
 
@@ -193,10 +192,16 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
 
     // ---- status + notifications --------------------------------------------------------------------------
 
-    private suspend fun progress(text: String, done: Int, total: Int) {
+    private fun info(text: String, pct: Int) = ForegroundInfo(
+        NOTIF_PROGRESS, Notify.running(applicationContext, "Backing up to Stash", text, pct), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+    )
+
+    /** [pct] = overall progress of the run, 0..100. */
+    private suspend fun progress(text: String, pct: Int) {
         prefs.status = text
         try {
-            setForeground(foregroundInfo(text, done, total))
+            setForeground(info(text, pct))
+            foreground = true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -209,48 +214,16 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         if (now - lastTick < 1000) return
         lastTick = now
         val pct = if (total > 0) (sent * 100 / total).toInt() else 0
-        prefs.status = "Uploading ${index + 1} of $count: ${item.name} ($pct%)"
-    }
-
-    private fun channel(id: String, name: String, importance: Int) {
-        applicationContext.getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(NotificationChannel(id, name, importance))
-    }
-
-    private fun foregroundInfo(text: String, done: Int, total: Int): ForegroundInfo {
-        channel(CH_PROGRESS, "Backup progress", NotificationManager.IMPORTANCE_LOW)
-        val n = Notification.Builder(applicationContext, CH_PROGRESS)
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setContentTitle("Backing up to Stash")
-            .setContentText(text)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setProgress(total, done, total == 0)
-            .build()
-        return ForegroundInfo(NOTIF_PROGRESS, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-    }
-
-    private fun alert(text: String) {
-        if (!Perms.canNotify(applicationContext)) return
-        channel(CH_ALERT, "Backup problems", NotificationManager.IMPORTANCE_DEFAULT)
-        val open = PendingIntent.getActivity(
-            applicationContext, 0, Intent(applicationContext, BackupActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val n = Notification.Builder(applicationContext, CH_ALERT)
-            .setSmallIcon(android.R.drawable.stat_notify_error)
-            .setContentTitle("Stash backup needs attention")
-            .setContentText(text)
-            .setContentIntent(open)
-            .setAutoCancel(true)
-            .build()
-        applicationContext.getSystemService(NotificationManager::class.java).notify(NOTIF_ALERT, n)
+        val text = "Uploading ${index + 1} of $count: ${item.name} ($pct%)"
+        prefs.status = text
+        if (foreground) {
+            val overall = ((index * 100L + pct) / count).toInt().coerceIn(0, 100)
+            Notify.update(applicationContext, NOTIF_PROGRESS, Notify.running(applicationContext, "Backing up to Stash", text, overall))
+        }
     }
 
     companion object {
         private val RUNNING = AtomicBoolean(false)
-        private const val CH_PROGRESS = "backup_progress"
-        private const val CH_ALERT = "backup_alerts"
         private const val NOTIF_PROGRESS = 41
         private const val NOTIF_ALERT = 42
     }

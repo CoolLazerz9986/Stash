@@ -1,12 +1,7 @@
 // Path: android/app/src/main/java/app/stash/android/WhatsAppBackup.kt
 package app.stash.android
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
@@ -147,11 +142,14 @@ class MediaIndex(private val ctx: Context, private val tree: Uri, private val ro
  * -> decrypt into a temp file in the app cache (hashing as it goes) -> upload the database unless the server holds
  * identical bytes -> media pass -> delete the temp file. One way: nothing on the phone is changed or deleted
  * (the WhatsApp folder is only read).
+ *
+ * Notifications: the ongoing one shows a real percentage while decrypting and uploading; problems are posted by [Notify].
  */
 class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     private val prefs = Prefs(applicationContext)
     private val backupDb = BackupDb(applicationContext) // remembers media files already handled (same table as photos)
     private var lastTick = 0L
+    private var foreground = false // setForeground worked, so the notification may be refreshed
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (!RUNNING.compareAndSet(false, true)) return@withContext Result.success()
@@ -213,14 +211,15 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
 
         // ---- decrypt (hashing the plain database while it is written) ----
         val md = MessageDigest.getInstance("SHA-256")
-        progress("Decrypting the WhatsApp backup…")
+        progress("Decrypting the WhatsApp backup…", 0)
         try {
             val input = applicationContext.contentResolver.openInputStream(found.uri)
                 ?: return stop("Could not open the WhatsApp backup file")
             DigestOutputStream(BufferedOutputStream(FileOutputStream(tmp), 64 * 1024), md).use { out ->
                 input.use {
                     Crypt15.decrypt(it, found.size, rootKey, out, { isStopped }) { done ->
-                        tick("Decrypting the WhatsApp backup… ${if (found.size > 0) done * 100 / found.size else 0}%")
+                        val pct = if (found.size > 0) (done * 100 / found.size).toInt().coerceIn(0, 100) else 0
+                        tick("Decrypting the WhatsApp backup… $pct%", pct)
                     }
                 }
             }
@@ -253,12 +252,16 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                     alert = true,
                 )
             }
-            progress("Uploading chats…")
+            progress("Uploading chats…", 0)
             try {
                 StashApi.upload(
                     base, prefs.apiKey, "msgstore.db", "application/vnd.sqlite3", plainSize, sha,
                     open = { FileInputStream(tmp) },
-                    onProgress = { sent -> tick("Uploading chats… ${if (plainSize > 0) sent * 100 / plainSize else 0}%") },
+                    onProgress = { sent ->
+                        val pct = if (plainSize > 0) (sent * 100 / plainSize).toInt().coerceIn(0, 100) else 0
+                        // after the last byte the server indexes the database before it answers: keep the text honest
+                        tick("Uploading chats… $pct%", if (pct >= 100) Notify.INDETERMINATE else pct)
+                    },
                     cancelled = { isStopped },
                     path = "/api/chats/import",
                     readTimeoutMs = 900_000, // the server indexes the database before it answers
@@ -489,22 +492,28 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         if (stamp != null) prefs.chatDone = stamp
         prefs.chatLastRun = System.currentTimeMillis()
         prefs.chatStatus = message
-        applicationContext.getSystemService(NotificationManager::class.java).cancel(NOTIF_ALERT)
+        Notify.clear(applicationContext, NOTIF_ALERT)
     }
 
     private fun stop(message: String, alert: Boolean = false): Result {
         prefs.chatStatus = message
-        if (alert) alert(message)
+        if (alert) Notify.alert(applicationContext, NOTIF_ALERT, "Stash chat backup needs attention", message)
         return Result.failure()
     }
 
-    // ---- status + notifications (same channels as BackupWorker) ----
+    // ---- status + notifications ----
 
-    private suspend fun progress(text: String) {
+    private fun info(text: String, pct: Int) = ForegroundInfo(
+        NOTIF_PROGRESS, Notify.running(applicationContext, "Backing up WhatsApp chats", text, pct), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+    )
+
+    /** [pct] 0..100 = real bar, [Notify.INDETERMINATE] = moving bar. */
+    private suspend fun progress(text: String, pct: Int = Notify.INDETERMINATE) {
         if (isStopped) return
         prefs.chatStatus = text
         try {
-            setForeground(foregroundInfo(text))
+            setForeground(info(text, pct))
+            foreground = true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -512,55 +521,19 @@ class ChatBackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         }
     }
 
-    private fun tick(text: String) {
+    private fun tick(text: String, pct: Int = Notify.INDETERMINATE) {
         if (isStopped) return // a stopped run must not overwrite the "Stopped" status
         val now = System.currentTimeMillis()
         if (now - lastTick < 1000) return
         lastTick = now
         prefs.chatStatus = text
-    }
-
-    private fun channel(id: String, name: String, importance: Int) {
-        applicationContext.getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(NotificationChannel(id, name, importance))
-    }
-
-    private fun foregroundInfo(text: String): ForegroundInfo {
-        channel(CH_PROGRESS, "Backup progress", NotificationManager.IMPORTANCE_LOW)
-        val n = Notification.Builder(applicationContext, CH_PROGRESS)
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setContentTitle("Backing up WhatsApp chats")
-            .setContentText(text)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setProgress(0, 0, true)
-            .build()
-        return ForegroundInfo(NOTIF_PROGRESS, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-    }
-
-    private fun alert(text: String) {
-        if (!Perms.canNotify(applicationContext)) return
-        channel(CH_ALERT, "Backup problems", NotificationManager.IMPORTANCE_DEFAULT)
-        val open = PendingIntent.getActivity(
-            applicationContext, 0, Intent(applicationContext, BackupActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val n = Notification.Builder(applicationContext, CH_ALERT)
-            .setSmallIcon(android.R.drawable.stat_notify_error)
-            .setContentTitle("Stash chat backup needs attention")
-            .setContentText(text)
-            .setContentIntent(open)
-            .setAutoCancel(true)
-            .build()
-        applicationContext.getSystemService(NotificationManager::class.java).notify(NOTIF_ALERT, n)
+        if (foreground) Notify.update(applicationContext, NOTIF_PROGRESS, Notify.running(applicationContext, "Backing up WhatsApp chats", text, pct))
     }
 
     companion object {
         private val RUNNING = AtomicBoolean(false)
         /** Media of chat messages from the last this many days is backed up unless a run asks for more (max 365). */
         const val DEFAULT_MEDIA_DAYS = 1
-        private const val CH_PROGRESS = "backup_progress"
-        private const val CH_ALERT = "backup_alerts"
         private const val NOTIF_PROGRESS = 43
         private const val NOTIF_ALERT = 44
     }
