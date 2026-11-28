@@ -36,7 +36,7 @@ body{
   padding-left:max(16px, env(safe-area-inset-left, 0px));
   padding-right:max(16px, env(safe-area-inset-right, 0px));
 }
-main{max-width:1400px;margin:0 auto}
+main{max-width:1460px;margin:0 auto}
 h1{font:400 clamp(32px,5vw,46px)/1.1 var(--hand);margin:0 0 6px;letter-spacing:.01em}
 .lede{margin:0 0 20px;max-width:64ch;color:var(--muted)}
 .bar{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;justify-content:space-between}
@@ -50,7 +50,7 @@ h1{font:400 clamp(32px,5vw,46px)/1.1 var(--hand);margin:0 0 6px;letter-spacing:.
 .sw.d{border-style:dashed;border-color:var(--accent)}
 .note{min-height:3em;margin:14px 0 12px;max-width:82ch}
 .canvas{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--bg)}
-svg{display:block;width:100%;min-width:1100px;height:auto}
+svg{display:block;width:100%;min-width:1160px;height:auto}
 
 /* diagram strokes and text */
 .ln{fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -91,9 +91,9 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
   </header>
 
   <div class="canvas" tabindex="0" role="region" aria-label="Android app architecture diagram. Scrolls sideways on small screens.">
-    <svg id="dia" viewBox="0 0 1400 2260" role="img" aria-labelledby="dia-t dia-d">
+    <svg id="dia" viewBox="0 0 1600 2370" role="img" aria-labelledby="dia-t dia-d">
       <title id="dia-t">Stash Android app architecture</title>
-      <desc id="dia-d">The Android app reaches the Stash server through three doors: the WebView showing the files and chats websites, Downloader for files and zips, and StashApi for setup, photo backup, and WhatsApp chat backup. MainActivity hosts the WebView. BackupActivity and BackupScheduler start BackupWorker (photos/videos) and ChatBackupWorker (crypt15 decryption via Crypt15 and WaSource). Settings live in Prefs, finished media in BackupDb, media in MediaStore, and WhatsApp backups in SAF plus app cache.</desc>
+      <desc id="dia-d">The Android app reaches the Stash server through three doors: the WebView showing the files and chats websites (plus layered chat WebViews), Downloader for files and zips, and StashApi for setup, photo backup, thumbnails, and WhatsApp chat plus chat-media backup. MainActivity hosts the layered WebViews. BackupActivity (with SwipeBackLayout) and BackupScheduler start BackupWorker (photos/videos) and ChatBackupWorker (crypt15 decryption via Crypt15, WaSource, MediaIndex, and Thumbs). Settings live in Prefs, finished media in BackupDb, media in MediaStore, and WhatsApp backups in SAF plus app cache.</desc>
     </svg>
   </div>
 </main>
@@ -191,35 +191,36 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
   }
 
   /* ================= SERVER (reference only; its own diagram is "stash-architecture.html") ================= */
-  box(40, 30, 1320, 225, { fill: 'z-server', r: 18, amp: 2.6 });
+  box(40, 30, 1515, 225, { fill: 'z-server', r: 18, amp: 2.6 });
   tx(70, 64, 'Stash server', 'zone');
   tx(270, 64, 'server.py + chats.py. Every route is listed in API.md', 'lab');
 
-  var s1 = box(60, 88, 420, 148, { fill: 'z-box', flows: 'browse chat' });
-  tx(80, 118, 'The websites', 'h2', s1);
-  tx(80, 144, ['GET /   (index.html) &  GET /chats   (chats.html)', 'API calls made by the pages:', '/api/files/*   and   /api/chats, /api/chats/<id>/messages'], 'sm', s1, 22);
+  var s1 = box(70, 88, 430, 148, { fill: 'z-box', flows: 'browse chat' });
+  tx(90, 118, 'The websites', 'h2', s1);
+  tx(90, 144, ['GET /   (index.html) &  GET /chats   (chats.html)', 'API calls made by the pages:', '/api/files/*   /thumb   and   /api/chats/*'], 'sm', s1, 22);
 
-  var s2 = box(500, 88, 420, 148, { fill: 'z-box', flows: 'download' });
-  tx(520, 118, 'Downloads', 'h2', s2);
-  tx(520, 144, ['GET /api/files/<id>/download', 'POST /api/zip   (a POST, not a link)', 'both need the login cookie'], 'sm', s2, 22);
+  var s2 = box(530, 88, 420, 148, { fill: 'z-box', flows: 'download' });
+  tx(550, 118, 'Downloads', 'h2', s2);
+  tx(550, 144, ['GET /api/files/<id>/download', 'POST /api/zip   (a POST, not a link)', 'both need the login cookie'], 'sm', s2, 22);
 
-  var s3 = box(940, 88, 400, 148, { fill: 'z-box', flows: 'setup browse enable backup chat' });
-  tx(960, 114, 'App API', 'h2', s3);
-  tx(960, 138, ['GET /api/session   is it Stash? api >= 2', 'GET /api/app-key   key for the session', 'GET /api/files/by-hash/<sha256>   + POST /api/upload', 'GET /api/chats/status   + POST /api/chats/import'], 'sm', s3, 22);
+  var s3 = box(1010, 88, 515, 148, { fill: 'z-box', flows: 'setup browse enable backup chat' });
+  tx(1030, 112, 'App API', 'h2', s3);
+  tx(1030, 136, ['GET /api/session   +   GET /api/app-key', 'GET /api/files/by-hash/<sha256>', 'POST /api/upload (+X-Source) & PUT .../thumb', 'GET /api/chats/status + POST /api/chats/import'], 'sm', s3, 22);
 
   /* three doors from the phone to the server */
-  arrow([[700, 236], [700, 380]], { both: true, flows: 'download', label: { x: 712, y: 286, t: 'door 2: Downloader, cookie' } });
-  arrow([[1140, 236], [1140, 380]], { both: true, flows: 'setup browse enable backup chat', label: { x: 1152, y: 286, t: 'door 3: StashApi, API key' } });
+  arrow([[400, 236], [400, 420]], { both: true, flows: 'browse chat', label: { x: 412, y: 298, t: 'door 1: WebView, cookie' } });
+  arrow([[740, 236], [740, 420]], { both: true, flows: 'download', label: { x: 752, y: 298, t: 'door 2: Downloader, cookie' } });
+  arrow([[1275, 236], [1275, 420]], { both: true, flows: 'setup browse enable backup chat', label: { x: 1287, y: 298, t: 'door 3: StashApi, API key' } });
 
-  /* ================= PHONE ================= */
-  box(40, 315, 1320, 960, { fill: 'z-client', r: 18, amp: 2.6 });
-  tx(70, 350, 'Phone', 'zone');
-  tx(170, 350, 'Android 10+, Kotlin', 'lab');
+  /* ================= PHONE (3 columns with 80px and 110px gutters + 65px right gutter) ================= */
+  box(40, 340, 1515, 1090, { fill: 'z-client', r: 18, amp: 2.6 });
+  tx(70, 376, 'Phone', 'zone');
+  tx(170, 376, 'Android 10+, Kotlin', 'lab');
 
-  /* ---- column 1: MainActivity (the website) ---- */
-  var ma = box(60, 380, 380, 620, { fill: 'z-box', flows: 'setup browse download enable chat' });
-  tx(80, 412, 'MainActivity', 'h2', ma);
-  tx(215, 410, 'launcher, hosts / & /chats', 'lab', ma);
+  /* ---- column 1 (x=70..450): MainActivity ---- */
+  var ma = box(70, 420, 380, 650, { fill: 'z-box', flows: 'setup browse download enable chat' });
+  tx(90, 452, 'MainActivity', 'h2', ma);
+  tx(225, 450, 'launcher, layered WebViews', 'lab', ma);
 
   function mini(x, y, w, h, flows, title, sub) {
     var m = box(x, y, w, h, { fill: 'z-mini', r: 8, amp: 1.2, flows: flows });
@@ -227,160 +228,162 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
     if (sub) tx(x + 14, y + 43, sub, 'sm', m);
     return m;
   }
-  mini(80, 436, 340, 56, 'browse download enable chat', 'WebView', 'loads / or /chats . login = the site cookie');
-  mini(80, 502, 340, 56, 'browse', 'WebChromeClient', 'ACTION_OPEN_DOCUMENT at storage root');
-  mini(80, 568, 340, 56, 'download', 'DownloadListener', 'file download links go to Downloader');
-  mini(80, 634, 340, 56, 'download enable', 'Bridge  window.StashApp', 'downloadZip(ids) . openSettings()');
-  mini(80, 700, 340, 56, 'browse', 'load() pre-check & error overlay', '8s StashApi.session() check before WebView');
-  mini(80, 766, 340, 56, 'browse chat', 'Stepwise Back button', 'dialog -> stashBack() -> / -> leave app');
-  mini(80, 832, 340, 56, 'setup browse chat', 'onResume & onNewIntent', 'reload on address/error; EXTRA_PATH -> /chats');
+  mini(90, 474, 340, 56, 'browse download enable chat', 'WebView + layers', 'base / stays alive; /chats & solo chats slide');
+  mini(90, 544, 340, 56, 'browse', 'load() pre-check & error overlay', '8s StashApi.session() check before WebView');
+  mini(90, 614, 340, 56, 'download', 'DownloadListener', 'file download links go to Downloader');
+  mini(90, 684, 340, 56, 'download enable browse chat', 'Bridge  window.StashApp', 'downloadZip, openSettings, openPage, closePage');
+  mini(90, 754, 340, 56, 'browse', 'WebChromeClient', 'ACTION_OPEN_DOCUMENT at storage root');
+  mini(90, 824, 340, 56, 'browse chat', 'Stack swipe & predictive Back', 'pop layer -> dialog -> stashBack() -> leave');
+  mini(90, 894, 340, 56, 'setup browse chat', 'onResume & onNewIntent', 'reload on address/error; EXTRA_PATH -> /chats');
 
-  /* door 1 (drawn after the box so it stays visible): server <-> WebView */
-  arrow([[400, 236], [400, 436]], { both: true, flows: 'browse chat', label: { x: 412, y: 286, t: 'door 1: WebView, cookie' } });
+  /* ---- column 2 (x=530..950): Downloader, BackupActivity, BackupScheduler, SetupActivity, Crypt15, Thumbs ---- */
+  var dl = box(530, 420, 420, 140, { fill: 'z-box', flows: 'download' });
+  tx(550, 450, 'Downloader', 'h2', dl);
+  tx(550, 475, ['its own HTTP request (GET or POST)', 'repeats the WebView cookie, streams body'], 'sm', dl, 20);
+  mini(550, 522, 380, 28, 'download', '', '');
+  tx(740, 542, 'saved in Downloads/Stash/', 'mid', null);
 
-  /* ---- column 2: Downloader, BackupActivity, BackupScheduler, SetupActivity, Crypt15 ---- */
-  var dl = box(470, 380, 410, 155, { fill: 'z-box', flows: 'download' });
-  tx(490, 412, 'Downloader', 'h2', dl);
-  tx(490, 438, ['its own HTTP request (GET or POST)', 'repeats the WebView cookie', 'streams the body to a file'], 'sm', dl, 21);
-  mini(490, 498, 370, 28, 'download', '', '');
-  tx(675, 518, 'saved in Downloads/Stash/', 'mid', null);
-
-  var ba = box(470, 555, 410, 245, { fill: 'z-box', flows: 'enable backup chat' });
-  tx(490, 586, 'BackupActivity', 'h2', ba);
-  tx(490, 612, [
+  var ba = box(530, 598, 420, 250, { fill: 'z-box', flows: 'enable backup chat' });
+  tx(550, 628, 'BackupActivity + SwipeBack', 'h2', ba);
+  tx(550, 654, [
     'photo/video cards: Wi-Fi, charging, folders',
-    'WhatsApp chats card (plain v1): 64-digit key,',
-    '   folder picker, Back up chats now, Open chats',
+    'WhatsApp card (plain v1): key, folder picker,',
+    '   Chats now, Older media…, Stop, Open chats',
     'watches network state (Waiting for Wi-Fi)',
     'Enable: permissions, session check,',
     '   API key via WebView cookie, then schedule'
   ], 'sm', ba, 22);
 
-  var bs = box(470, 820, 410, 125, { fill: 'z-box', flows: 'enable backup chat' });
-  tx(490, 850, 'BackupScheduler', 'h2', bs);
-  tx(490, 876, [
+  var bs = box(530, 875, 420, 130, { fill: 'z-box', flows: 'enable backup chat' });
+  tx(550, 905, 'BackupScheduler', 'h2', bs);
+  tx(550, 932, [
     'apply(): 1h photo job; applyChat(): 6h chat job',
-    'runNow() / runChatNow() (KEEP policy)',
+    'runNow() / runChatNow() (KEEP), stopChat()',
     'waitingForWifi() / noteWifiWait() status helper'
   ], 'sm', bs, 21);
 
-  var su = box(470, 965, 410, 150, { fill: 'z-box', flows: 'setup' });
-  tx(490, 996, 'SetupActivity', 'h2', su);
-  tx(490, 1022, [
+  var su = box(530, 1035, 420, 140, { fill: 'z-box', flows: 'setup' });
+  tx(550, 1065, 'SetupActivity', 'h2', su);
+  tx(550, 1091, [
     'asks for the server address',
     'checks GET /api/session (is it Stash?)',
     'saves Prefs.serverUrl, opens MainActivity',
     'new address clears key + photo history'
-  ], 'sm', su, 21);
+  ], 'sm', su, 20);
 
-  var cr = box(470, 1135, 410, 115, { fill: 'z-box', flows: 'chat' });
-  tx(490, 1166, 'Crypt15', 'h2', cr);
-  tx(585, 1164, 'pure JVM, no Android classes', 'lab', cr);
-  tx(490, 1192, [
-    'parseKey() -> HMAC key derivation -> protobuf IV',
-    'streams AES-CTR + zlib in 64 KB chunks',
-    'verified via zlib checksum + SQLite header'
-  ], 'sm', cr, 21);
+  var cr = box(530, 1205, 420, 100, { fill: 'z-box', flows: 'chat' });
+  tx(550, 1234, 'Crypt15', 'h2', cr);
+  tx(645, 1232, 'pure JVM, no Android classes', 'lab', cr);
+  tx(550, 1258, [
+    'parseKey() -> HMAC key -> protobuf IV',
+    'streams AES-CTR + zlib in 64 KB chunks'
+  ], 'sm', cr, 20);
 
-  /* ---- column 3: StashApi, BackupWorker, ChatBackupWorker ---- */
-  var sa = box(910, 380, 430, 265, { fill: 'z-box', flows: 'setup browse enable backup chat' });
-  tx(930, 412, 'StashApi', 'h2', sa);
-  tx(1030, 410, 'the one HTTP client for the API', 'lab', sa);
-  tx(930, 444, [
+  var th = box(530, 1335, 420, 64, { fill: 'z-box', flows: 'backup chat' });
+  tx(550, 1365, 'Thumbs', 'h2', th);
+  tx(645, 1363, '320 px JPEG previews (<= 120 KB)', 'lab', th);
+  tx(550, 1386, 'EXIF-rotated images + video frames -> PUT .../thumb', 'sm', th);
+
+  /* ---- column 3 (x=1060..1490): StashApi, BackupWorker, ChatBackupWorker ---- */
+  var sa = box(1060, 420, 430, 275, { fill: 'z-box', flows: 'setup browse enable backup chat' });
+  tx(1080, 452, 'StashApi', 'h2', sa);
+  tx(1180, 450, 'the one HTTP client for the API', 'lab', sa);
+  tx(1080, 482, [
     'session()        is it Stash? api version?',
     'fetchAppKey()    needs the WebView cookie',
     'exists(sha256)   already on the server?',
     'chatStatus()     server chat sha256 + maxBytes',
-    'upload(...)      streams + X-Sha256 (files or chats)',
-    'errors: ApiException, SourceException, UploadCancelled',
-    'blocking: never on the main thread'
+    'putThumb(...)    PUT JPEG preview by hash',
+    'upload(...)      streams + X-Sha256 (+ X-Source)',
+    'errors: ApiException, SourceException, Cancelled'
   ], 'sm', sa, 22);
 
-  var bw = box(910, 665, 430, 315, { fill: 'z-box', flows: 'backup' });
-  tx(930, 696, 'BackupWorker', 'h2', bw);
-  tx(1095, 694, 'one photo/video pass, safe to stop', 'lab', bw);
-  tx(930, 728, [
+  var bw = box(1060, 735, 430, 320, { fill: 'z-box', flows: 'backup' });
+  tx(1080, 766, 'BackupWorker', 'h2', bw);
+  tx(1245, 764, 'one photo/video pass, safe to stop', 'lab', bw);
+  tx(1080, 798, [
     '1  MediaSource.list  (by Prefs filters)',
     '2  BackupDb.isDone?  (same uri + size + date)',
     '3  Skip if size > maxBytes (not recorded -> "too big")',
     '4  hash the file  (SHA-256 + byte count)',
     '5  StashApi.exists?  (present -> record, skip)',
-    '6  StashApi.upload  (body + X-Sha256)',
+    '6  StashApi.upload + Thumbs.make -> putThumb',
     '7  BackupDb.mark + Prefs.status + notification'
   ], 'sm', bw, 31);
 
-  var cw = box(910, 1000, 430, 250, { fill: 'z-box', flows: 'chat' });
-  tx(930, 1030, 'ChatBackupWorker + WaSource', 'h2', cw);
-  tx(930, 1060, [
+  var cw = box(1060, 1095, 430, 310, { fill: 'z-box', flows: 'chat' });
+  tx(1080, 1125, 'ChatBackupWorker + WaSource', 'h2', cw);
+  tx(1080, 1154, [
     '1  StashApi.chatStatus()  (server sha256 + limit)',
     '2  WaSource.findNewest()  (SAF msgstore*.crypt15)',
     '3  Skip if stamp == Prefs.chatDone (unless force)',
     '4  Crypt15.decrypt() -> cacheDir/wa-decrypted.db + SHA',
-    '5  Check "SQLite format 3" + sha == server.sha256?',
-    '6  StashApi.upload(..., /api/chats/import, 15m timeout)',
+    '5  POST /api/chats/import if DB changed',
+    '6  Media pass: MediaIndex + SHA verify -> upload',
+    '    (X-Source: whatsapp) + Thumbs -> putThumb',
     '7  Update Prefs.chatDone + chatStatus, delete temp'
   ], 'sm', cw, 24);
 
-  /* ---- arrows inside the phone ---- */
-  /* MainActivity -> Downloader */
-  arrow([[420, 595], [458, 595], [458, 435], [470, 435]], { flows: 'download' });
-  arrow([[420, 650], [448, 650], [448, 455], [470, 455]], { flows: 'download' });
-  /* website settings button -> BackupActivity; Open chats -> MainActivity */
-  arrow([[420, 678], [470, 678]], { flows: 'enable' });
-  arrow([[470, 765], [440, 855]], { flows: 'chat' });
-  /* MainActivity pre-check -> StashApi */
-  arrow([[420, 728], [455, 728], [455, 545], [895, 545], [910, 545]], { flows: 'browse' });
-  /* BackupActivity -> BackupScheduler -> workers */
-  arrow([[675, 800], [675, 820]], { flows: 'enable backup chat' });
-  arrow([[880, 870], [910, 870]], { flows: 'enable backup' });
-  arrow([[880, 910], [895, 910], [895, 1065], [910, 1065]], { flows: 'enable chat' });
-  /* screens -> StashApi */
-  arrow([[880, 600], [910, 600]], { flows: 'enable' });
-  arrow([[880, 1020], [895, 1020], [895, 625], [910, 625]], { flows: 'setup' });
-  /* workers -> StashApi & Crypt15 */
-  arrow([[1130, 665], [1130, 645]], { flows: 'backup' });
-  arrow([[1340, 1120], [1355, 1120], [1355, 515], [1340, 515]], { flows: 'chat' });
-  arrow([[910, 1190], [880, 1190]], { both: true, flows: 'chat' });
+  /* ---- arrows inside the phone (wide 80px / 110px gutters, 0 boxes crossed) ---- */
+  /* Gutter 1 (x=450..530): MainActivity <-> Downloader, BackupActivity, StashApi */
+  arrow([[450, 579], [1060, 579]], { flows: 'browse' }); /* load() pre-check passes cleanly between Downloader (560) and BackupActivity (598) */
+  arrow([[450, 642], [468, 642], [468, 465], [530, 465]], { flows: 'download' }); /* DownloadListener -> Downloader */
+  arrow([[450, 700], [488, 700], [488, 498], [530, 498]], { flows: 'download' }); /* Bridge.downloadZip -> Downloader */
+  arrow([[450, 725], [530, 725]], { flows: 'enable' }); /* Bridge.openSettings -> BackupActivity */
+  arrow([[530, 815], [510, 815], [510, 922], [450, 922]], { flows: 'chat' }); /* Open chats -> MainActivity.onNewIntent */
+
+  /* Gutter 2 (x=950..1060): Column 2 <-> Column 3 (4 separate vertical tracks: 966, 992, 1016, 1042) */
+  arrow([[740, 848], [740, 875]], { flows: 'enable backup chat' }); /* BackupActivity -> BackupScheduler */
+  arrow([[950, 636], [1060, 636]], { flows: 'enable' }); /* BackupActivity -> StashApi */
+  arrow([[950, 1072], [1016, 1072], [1016, 672], [1060, 672]], { flows: 'setup' }); /* SetupActivity -> StashApi */
+  arrow([[950, 905], [1060, 905]], { flows: 'enable backup' }); /* BackupScheduler -> BackupWorker */
+  arrow([[950, 955], [992, 955], [992, 1135], [1060, 1135]], { flows: 'enable chat' }); /* BackupScheduler -> ChatBackupWorker */
+  arrow([[1060, 975], [966, 975], [966, 1352], [950, 1352]], { both: true, flows: 'backup' }); /* BackupWorker <-> Thumbs */
+  arrow([[1060, 1245], [950, 1245]], { both: true, flows: 'chat' }); /* ChatBackupWorker <-> Crypt15 */
+  arrow([[1060, 1380], [950, 1380]], { both: true, flows: 'chat' }); /* ChatBackupWorker <-> Thumbs */
+  arrow([[1275, 735], [1275, 695]], { flows: 'backup' }); /* BackupWorker -> StashApi */
+  arrow([[1490, 1235], [1538, 1235], [1538, 550], [1490, 550]], { flows: 'chat' }); /* ChatBackupWorker -> StashApi (outer right track) */
 
   /* ================= ON THE PHONE: state and Android services ================= */
-  box(40, 1315, 1320, 245, { fill: 'z-data', r: 18, amp: 2.6 });
-  tx(70, 1545, 'On the phone', 'zone');
-  tx(250, 1545, 'app storage and Android services', 'lab');
+  box(40, 1510, 1515, 260, { fill: 'z-data', r: 18, amp: 2.6 });
+  tx(70, 1750, 'On the phone', 'zone');
+  tx(250, 1750, 'app storage and Android services', 'lab');
 
-  var d1 = box(60, 1365, 225, 145, { fill: 'z-box', flows: 'browse download enable' });
-  tx(76, 1398, 'CookieManager', 'h2', d1);
-  tx(76, 1424, ['WebView cookie jar', 'holds stash_session', 'read by Downloader,', 'BackupActivity enable'], 'sm', d1, 20);
+  var d1 = box(70, 1565, 225, 145, { fill: 'z-box', flows: 'browse download enable' });
+  tx(86, 1598, 'CookieManager', 'h2', d1);
+  tx(86, 1624, ['WebView cookie jar', 'holds stash_session', 'read by Downloader,', 'BackupActivity enable'], 'sm', d1, 20);
 
-  var d2 = box(300, 1365, 315, 145, { fill: 'z-box', flows: 'setup browse enable backup chat' });
-  tx(316, 1398, 'Prefs', 'h2', d2);
-  tx(382, 1396, 'SharedPreferences "stash"', 'lab', d2);
-  tx(316, 1422, ['serverUrl, apiKey, backupEnabled', 'wifiOnly, chargingOnly, buckets, status', 'chatEnabled, chatKey, chatTree,', 'chatDone, chatLastRun, chatStatus'], 'sm', d2, 20);
+  var d2 = box(320, 1565, 335, 145, { fill: 'z-box', flows: 'setup browse enable backup chat' });
+  tx(336, 1598, 'Prefs', 'h2', d2);
+  tx(402, 1596, 'SharedPreferences "stash"', 'lab', d2);
+  tx(336, 1622, ['serverUrl, apiKey, backupEnabled', 'wifiOnly, chargingOnly, buckets, status', 'chatEnabled, chatKey, chatTree,', 'chatDone, chatLastRun, chatStatus'], 'sm', d2, 20);
 
-  var d3 = box(630, 1365, 225, 145, { fill: 'z-box', flows: 'backup setup' });
-  tx(646, 1398, 'BackupDb', 'h2', d3);
-  tx(760, 1396, 'v2', 'lab', d3);
-  tx(646, 1424, ['SQLite backup.db', 'uri + size + modified', 'uploaded / present /', 'skipped (0 B only)'], 'sm', d3, 20);
+  var d3 = box(680, 1565, 235, 145, { fill: 'z-box', flows: 'backup setup chat' });
+  tx(696, 1598, 'BackupDb', 'h2', d3);
+  tx(810, 1596, 'v2', 'lab', d3);
+  tx(696, 1624, ['SQLite backup.db', 'uri + size + modified', 'uploaded / present /', 'mismatch / skipped'], 'sm', d3, 20);
 
-  var d4 = box(870, 1365, 220, 145, { fill: 'z-box', flows: 'backup enable' });
-  tx(886, 1398, 'MediaStore', 'h2', d4);
-  tx(886, 1424, ['photos + videos via', 'ContentResolver +', 'ACCESS_MEDIA_LOC'], 'sm', d4, 20);
+  var d4 = box(940, 1565, 240, 145, { fill: 'z-box', flows: 'backup enable' });
+  tx(956, 1598, 'MediaStore', 'h2', d4);
+  tx(956, 1624, ['photos + videos via', 'ContentResolver +', 'ACCESS_MEDIA_LOC'], 'sm', d4, 20);
 
-  var d5 = box(1105, 1365, 235, 145, { fill: 'z-box', flows: 'chat' });
-  tx(1121, 1398, 'SAF + cacheDir', 'h2', d5);
-  tx(1121, 1424, ['persisted WhatsApp', 'tree URI (read-only)', '+ wa-decrypted.db'], 'sm', d5, 20);
+  var d5 = box(1205, 1565, 285, 145, { fill: 'z-box', flows: 'chat' });
+  tx(1221, 1598, 'SAF + cacheDir', 'h2', d5);
+  tx(1221, 1624, ['persisted WhatsApp', 'tree URI (read-only)', '+ wa-decrypted.db'], 'sm', d5, 20);
 
-  arrow([[150, 1000], [150, 1365]], { both: true, flows: 'browse download enable', label: { x: 160, y: 1200, t: 'cookie' } });
-  arrow([[360, 1365], [360, 1000]], { flows: 'setup browse', label: { x: 370, y: 1200, t: 'serverUrl' } });
-  arrow([[535, 1115], [535, 1365]], { flows: 'setup', label: { x: 465, y: 1295, t: 'serverUrl' } });
-  arrow([[910, 955], [575, 955], [575, 1365]], { flows: 'backup', label: { x: 585, y: 1295, t: 'status' } });
-  arrow([[742, 1295], [742, 1365]], { both: true, flows: 'backup' });
-  arrow([[980, 980], [980, 1365]], { flows: 'backup', label: { x: 990, y: 1295, t: 'media' } });
-  arrow([[1220, 1250], [1220, 1365]], { both: true, flows: 'chat', label: { x: 1230, y: 1300, t: 'crypt15 + tmp' } });
+  /* spaced, non-box-crossing routing lanes between Phone (y=1430) and On the phone (y=1565) */
+  arrow([[160, 1070], [160, 1565]], { both: true, flows: 'browse download enable', label: { x: 170, y: 1475, t: 'cookie' } });
+  arrow([[390, 1565], [390, 1070]], { flows: 'setup browse', label: { x: 324, y: 1475, t: 'serverUrl' } });
+  arrow([[530, 1110], [492, 1110], [492, 1565]], { flows: 'setup', label: { x: 500, y: 1475, t: 'serverUrl' } });
+  arrow([[1060, 1030], [1042, 1030], [1042, 1462], [755, 1462], [755, 1565]], { both: true, flows: 'backup' }); /* BackupWorker <-> BackupDb */
+  arrow([[1100, 1405], [1100, 1488], [845, 1488], [845, 1565]], { both: true, flows: 'chat' }); /* ChatBackupWorker <-> BackupDb */
+  arrow([[1490, 960], [1514, 960], [1514, 1472], [1140, 1472], [1140, 1565]], { flows: 'backup', label: { x: 1148, y: 1525, t: 'media' } }); /* BackupWorker -> MediaStore via right gutter */
+  arrow([[1345, 1405], [1345, 1565]], { both: true, flows: 'chat', label: { x: 1355, y: 1525, t: 'crypt15 + media' } });
 
   /* ================= NOTES ================= */
-  var n1 = box(40, 1600, 650, 345, { fill: 'z-box', r: 14 });
-  tx(60, 1636, 'Rules to keep it tidy', 'h2', n1);
-  tx(60, 1670, [
+  var n1 = box(40, 1810, 742, 290, { fill: 'z-box', r: 14 });
+  tx(60, 1846, 'Rules to keep it tidy', 'h2', n1);
+  tx(60, 1880, [
     '• Every call to the server goes through StashApi, Downloader',
     '   or the WebView. Never add a fourth way.',
     '• No network on the main thread: use Thread { } or a worker.',
@@ -389,59 +392,55 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
     '   stopped run resumes. ChatBackupWorker skips unchanged backups.',
     '• Workers talk to BackupActivity only through Prefs.',
     '• Both backups are one-way. Never delete anything on the phone.',
-    '• New dependency? Needs a reason. Today: core, activity, work.',
-    '• Screens are built in code with Ui.kt (website colours, light/dark).',
-    '   WhatsApp chats card in BackupActivity is still plain v1.'
-  ], '', n1, 25);
+    '• New dependency? Needs a reason. Today: core, activity, work.'
+  ], '', n1, 23);
 
-  var n2 = box(710, 1600, 650, 345, { fill: 'z-box', r: 14 });
-  tx(730, 1636, 'Where to change what', 'h2', n2);
-  tx(730, 1670, [
+  var n2 = box(813, 1810, 742, 290, { fill: 'z-box', r: 14 });
+  tx(833, 1846, 'Where to change what', 'h2', n2);
+  tx(833, 1880, [
     'New setting  →  Prefs.kt, BackupActivity.kt, BackupScheduler.kt',
     'New server route  →  API.md, server.py / chats.py, StashApi.kt',
-    'Photo/video backup  →  MediaSource.kt, BackupWorker.kt, BackupDb.kt',
-    'WhatsApp chat backup  →  WhatsAppBackup.kt, Crypt15.kt',
+    'Photo/video backup  →  MediaSource.kt, BackupWorker.kt, BackupDb.kt, Thumbs.kt',
+    'WhatsApp chat backup  →  WhatsAppBackup.kt, Crypt15.kt, Thumbs.kt',
     'Downloads and zips  →  Downloader.kt, MainActivity.kt',
-    'Website hooks  →  MainActivity.kt Bridge, index.html, chats.html',
-    '   (window.StashApp + window.stashBack)',
+    'Website hooks & page stack  →  MainActivity.kt, SwipeBack.kt,',
+    '   index.html, chats.html (window.StashApp + window.stashBack)',
     'Permissions, service, cleartext http  →',
-    '   AndroidManifest.xml, res/xml/network_security_config.xml',
-    'Colours, cards, buttons, light/dark  →  Ui.kt'
-  ], '', n2, 25);
+    '   AndroidManifest.xml, res/xml/network_security_config.xml'
+  ], '', n2, 23);
 
-  var n3 = box(40, 1975, 650, 255, { fill: 'z-box', r: 14 });
-  tx(60, 2010, 'Threads and lifetimes', 'h2', n3);
-  tx(60, 2044, [
+  var n3 = box(40, 2125, 742, 215, { fill: 'z-box', r: 14 });
+  tx(60, 2160, 'Threads and lifetimes', 'h2', n3);
+  tx(60, 2194, [
     '• Screens and the WebView run on the main thread. Calls from',
     '   the page (StashApp.*) arrive on a WebView thread.',
     '• Setup check, MainActivity load(), enable, and downloads each run',
     '   in a plain Thread { } and report back with runOnUiThread.',
     '• Backups run in WorkManager: 1h for photos/videos, 6h for chats,',
-    '   plus manual "now" runs. One pass at a time per worker.',
-    '• Progress notifications use a dataSync foreground service.'
-  ], '', n3, 25);
+    '   plus manual "now" runs. Progress uses a dataSync service.'
+  ], '', n3, 23);
 
-  var f2 = box(710, 1975, 650, 255, { fut: true, r: 14 });
-  tx(730, 2012, 'Not built yet / open upgrades', 'futt', f2);
+  var f2 = box(813, 2125, 742, 215, { fut: true, r: 14 });
+  tx(833, 2160, 'Not built yet / open upgrades', 'futt', f2);
   [
     ['Resumable uploads', 'needs a server route that accepts byte ranges'],
     ['Share to Stash & mobile-data override', 'Android share sheet + "Use mobile data this once"'],
     ['Restyle WhatsApp card + contact names', 'polish BackupActivity chats card; optional wa.db'],
     ['Folders, tags, per-user keys', 'needs server-side folders and user accounts']
   ].forEach(function (it, i) {
-    tx(730, 2052 + i * 44, it[0], '', f2);
-    tx(730, 2073 + i * 44, it[1], 'sm', f2);
+    tx(833, 2195 + i * 35, it[0] + '  —  ', '', f2);
+    tx(1165, 2195 + i * 35, it[1], 'sm', f2);
   });
 
   /* ---------------- path highlighter ---------------- */
   var texts = {
     all: 'Showing everything. Pick a path to see which parts it uses.',
     setup: 'First launch: MainActivity finds no server address and opens SetupActivity. It checks GET /api/session through StashApi, saves Prefs.serverUrl and opens MainActivity. Changing the address clears the old API key and photo backup history (chatEnabled reset is still open in TASKS.md).',
-    browse: 'Browsing: MainActivity pre-checks GET /api/session (8s timeout) and loads / or /chats in the WebView. Uploads use ACTION_OPEN_DOCUMENT rooted at main storage so the picker does not reopen in the WhatsApp folder. Back steps through <dialog>, window.stashBack(), /, and leaving the app.',
+    browse: 'Browsing: MainActivity pre-checks GET /api/session (8s timeout) and keeps / in its base WebView while pushing /chats (and narrow-screen solo chats) as native layered WebViews with left-edge swipe and predictive Back. Uploads use ACTION_OPEN_DOCUMENT rooted at main storage.',
     download: 'Download: file links reach DownloadListener (GET). Zips go through StashApp.downloadZip (POST). Downloader repeats the request with the WebView cookie and saves into Downloads/Stash.',
     enable: 'Turning backup on: BackupActivity checks permissions (or 64-digit key + SAF folder for chats), verifies GET /api/session, exchanges the WebView cookie at GET /api/app-key, stores apiKey in Prefs, and schedules WorkManager via BackupScheduler.',
-    backup: 'Photo/video backup: BackupWorker lists MediaStore items, skips what BackupDb says is done, skips files over maxBytes as "too big", hashes each new file, checks GET /api/files/by-hash/<sha256>, and uploads with X-Sha256.',
-    chat: 'WhatsApp chat backup (alpha v1): ChatBackupWorker checks GET /api/chats/status, finds the newest msgstore*.crypt15 via WaSource (SAF), streams decryption with Crypt15 into cacheDir/wa-decrypted.db while hashing, and POSTs to /api/chats/import if changed.'
+    backup: 'Photo/video backup: BackupWorker lists MediaStore items, skips what BackupDb says is done, skips files over maxBytes as "too big", hashes each new file, checks GET /api/files/by-hash/<sha256>, uploads with X-Sha256, and uploads a 320 px JPEG preview via Thumbs + putThumb.',
+    chat: 'WhatsApp chat backup (v1): ChatBackupWorker checks GET /api/chats/status, finds the newest msgstore*.crypt15 via WaSource (SAF), streams decryption with Crypt15 into cacheDir/wa-decrypted.db while hashing, POSTs to /api/chats/import if changed, and backs up SHA-256-matched chat media (X-Source: whatsapp) + Thumbs previews.'
   };
   var chips = Array.prototype.slice.call(document.querySelectorAll('.chip'));
   var note = document.getElementById('note');

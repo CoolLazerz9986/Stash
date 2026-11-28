@@ -74,7 +74,7 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
 <main>
   <header>
     <h1>Stash architecture</h1>
-    <p class="lede">Browser at the top, server in the middle, files and chat snapshots on disk at the bottom. Clients only talk to the server's API, and only the server touches the data.</p>
+    <p class="lede">Browser at the top, server in the middle, files, thumbnails and chat snapshots on disk at the bottom. Clients only talk to the server's API, and only the server touches the data.</p>
     <div class="bar">
       <div class="chips" role="group" aria-label="Highlight a path through the system">
         <button class="chip" type="button" data-flow="all" aria-pressed="true">Everything</button>
@@ -91,9 +91,9 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
   </header>
 
   <div class="canvas" tabindex="0" role="region" aria-label="Architecture diagram. Scrolls sideways on small screens.">
-    <svg id="dia" viewBox="0 0 1400 1120" role="img" aria-labelledby="dia-t dia-d">
+    <svg id="dia" viewBox="0 0 1400 1160" role="img" aria-labelledby="dia-t dia-d">
       <title id="dia-t">Stash architecture</title>
-      <desc id="dia-d">The browser front-end (index.html and chats.html) and Android app call the server's API over HTTP. The server's router passes requests to Auth, the File service (server.py), and the Chat service (chats.py), which read and write stash.db, blobs, chats snapshots, tmp, secret.key, and api.key on disk.</desc>
+      <desc id="dia-d">The browser front-end (index.html and chats.html) and Android app call the server's API over HTTP. The server's router passes requests to Auth, the File service (server.py), and the Chat service (chats.py), which read and write stash.db, thumbs, blobs, tmp, chats snapshots, secret.key, and api.key on disk without crossing paths.</desc>
     </svg>
   </div>
 </main>
@@ -201,9 +201,9 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
   tx(70, 390, 'Server', 'zone');
   tx(170, 390, 'Armbian machine (Debian VM dev), server.py + chats.py, Python stdlib only', 'lab');
 
-  box(40, 825, 900, 260, { fill: 'z-data', r: 18, amp: 2.6 });
-  tx(70, 1068, 'Data on disk', 'zone');
-  tx(235, 1068, '/srv/stash-data (the STASH_DATA folder)', 'lab');
+  box(40, 860, 900, 265, { fill: 'z-data', r: 18, amp: 2.6 });
+  tx(70, 1108, 'Data on disk', 'zone');
+  tx(235, 1108, '/srv/stash-data (the STASH_DATA folder)', 'lab');
 
   /* ---------------- client ---------------- */
   var fe = box(70, 82, 420, 180, { fill: 'z-box', flows: ALL });
@@ -211,7 +211,7 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
   tx(222, 112, 'index.html & chats.html', 'sm', fe);
 
   var m1 = box(90, 134, 180, 34, { fill: 'z-mini', r: 8, amp: 1.2, flows: 'download manage' });
-  tx(180, 157, 'File browser', 'mid', m1);
+  tx(180, 157, 'File browser + thumbs', 'mid', m1);
   var m2 = box(290, 134, 180, 34, { fill: 'z-mini', r: 8, amp: 1.2, flows: 'upload' });
   tx(380, 157, 'Upload queue', 'mid', m2);
   var m3 = box(90, 176, 180, 34, { fill: 'z-mini', r: 8, amp: 1.2, flows: 'download' });
@@ -219,83 +219,90 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
   var m4 = box(290, 176, 180, 34, { fill: 'z-mini', r: 8, amp: 1.2, flows: 'login' });
   tx(380, 199, 'Login screen', 'mid', m4);
   var m5 = box(90, 218, 380, 32, { fill: 'z-mini', r: 8, amp: 1.2, flows: 'chats' });
-  tx(280, 240, 'WhatsApp chat viewer (chats.html)', 'mid', m5);
+  tx(280, 240, 'WhatsApp chat viewer + media (chats.html)', 'mid', m5);
 
   var api = box(570, 100, 330, 145, { fill: 'z-box', flows: BK });
   tx(590, 136, ['File & chat', 'API calls'], 'h2', api, 28);
-  tx(590, 196, 'fetch / XHR: JSON and raw file/db bodies', 'sm', api);
+  tx(590, 196, 'fetch / XHR: JSON and raw file/db/thumb bodies', 'sm', api);
   tx(590, 218, 'login: cookie (web) or API key (app)', 'sm', api);
 
   arrow([[490, 170], [570, 170]], { both: true, flows: ALL });
-  arrow([[735, 245], [735, 415]], { both: true, flows: BK, label: { x: 715, y: 332, t: 'HTTP, port 8080', end: true } });
+  arrow([[735, 245], [735, 415]], { both: true, flows: BK, label: { x: 718, y: 325, t: 'HTTP, port 8080', end: true } });
 
   /* ---------------- server ---------------- */
-  var router = box(70, 415, 830, 82, { fill: 'z-box', flows: BK });
+  var router = box(70, 415, 845, 82, { fill: 'z-box', flows: BK });
   tx(90, 452, 'Router', 'h2', router);
-  tx(190, 444, 'The Handler class. Checks login/key, routes /api/files and /api/chats, streams bytes.', 'sm', router);
+  tx(190, 444, 'The Handler class. Checks login/key, routes /api/files, /thumb and /api/chats.', 'sm', router);
   tx(190, 468, 'Serves index.html and chats.html with security headers (CSP, nosniff).', 'sm', router);
 
-  var auth = box(70, 555, 200, 165, { fill: 'z-box', flows: BK });
+  var auth = box(70, 555, 185, 165, { fill: 'z-box', flows: BK });
   tx(86, 588, 'Auth', 'h2', auth);
   tx(86, 616, ['password + signed cookie', 'API key for Android app', '10 misses / 5 min limit', '(/api/session counted)'], 'sm', auth, 21);
 
-  var safe = box(285, 555, 175, 165, { fill: 'z-box', flows: 'upload download backup chats' });
-  tx(301, 588, 'Safety rules', 'h2', safe);
-  tx(301, 616, ['clean file names', 'random ids on disk', 'HTML shown as text', 'SVG sandboxed'], 'sm', safe, 21);
+  var safe = box(275, 555, 160, 165, { fill: 'z-box', flows: 'upload download backup chats' });
+  tx(291, 588, 'Safety rules', 'h2', safe);
+  tx(291, 616, ['clean file names', 'random ids on disk', 'HTML shown as text', 'SVG sandboxed'], 'sm', safe, 21);
 
-  var files = box(475, 555, 210, 165, { fill: 'z-box', flows: 'upload download manage backup' });
-  tx(491, 588, 'File service', 'h2', files);
-  tx(491, 616, ['upload: stream + SHA-256', 'download: Range + ETag', 'zip, rename, delete,', 'by-hash lookup'], 'sm', files, 21);
+  var files = box(468, 555, 212, 165, { fill: 'z-box', flows: 'upload download manage backup chats' });
+  tx(484, 588, 'File service', 'h2', files);
+  tx(484, 616, ['upload, X-Source, SHA-256', 'download: Range + ETag', 'thumbs, zip, rename,', 'delete, by-hash lookup'], 'sm', files, 21);
 
-  var ch = box(700, 555, 200, 165, { fill: 'z-box', flows: 'chats' });
-  tx(716, 588, 'Chat service', 'h2', ch);
-  tx(716, 606, 'chats.py', 'lab', ch);
-  tx(716, 632, ['validate plain SQLite', 'add index + .json', 'keep newest snapshots', 'list chats + page msgs'], 'sm', ch, 21);
+  var ch = box(715, 555, 200, 165, { fill: 'z-box', flows: 'chats' });
+  tx(731, 588, 'Chat service', 'h2', ch);
+  tx(731, 606, 'chats.py', 'lab', ch);
+  tx(731, 632, ['validate plain SQLite', 'index + .json + thumbs', 'keep newest snapshots', 'msgs + SHA media link'], 'sm', ch, 21);
 
-  arrow([[170, 497], [170, 555]], { both: true, flows: BK });
-  arrow([[580, 497], [580, 555]], { both: true, flows: 'upload download manage backup' });
-  arrow([[800, 497], [800, 555]], { both: true, flows: 'chats' });
-  arrow([[460, 635], [475, 635]], { both: true, flows: 'upload download backup' });
+  arrow([[162, 497], [162, 555]], { both: true, flows: BK });
+  arrow([[574, 497], [574, 555]], { both: true, flows: 'upload download manage backup' });
+  arrow([[815, 497], [815, 555]], { both: true, flows: 'chats' });
+  arrow([[435, 635], [468, 635]], { both: true, flows: 'upload download backup' });
+  arrow([[715, 635], [680, 635]], { both: true, flows: 'chats' });
 
-  /* ---------------- data on disk ---------------- */
-  var key = box(70, 880, 165, 145, { fill: 'z-box', flows: BK });
-  tx(86, 912, 'secret + api', 'h2', key);
-  tx(86, 938, ['secret.key signs', 'cookies; api.key', 'for app / scripts'], 'sm', key, 21);
+  /* ---------------- data on disk (aligned below each service so no arrows cross) ---------------- */
+  var key = box(65, 915, 135, 145, { fill: 'z-box', flows: BK });
+  tx(79, 947, 'secret + api', 'h2', key);
+  tx(79, 973, ['secret.key signs', 'cookies; api.key', 'for app / scripts'], 'sm', key, 21);
 
-  var db = box(250, 880, 165, 145, { fill: 'z-box', flows: 'upload download manage backup' });
-  tx(266, 912, 'stash.db', 'h2', db);
-  tx(266, 938, ['SQLite, one row', 'per file: name,', 'SHA-256, dates'], 'sm', db, 21);
+  var db = box(220, 915, 145, 145, { fill: 'z-box', flows: 'upload download manage backup chats' });
+  tx(234, 947, 'stash.db', 'h2', db);
+  tx(234, 973, ['SQLite, one row', 'per file: name,', 'SHA-256, source'], 'sm', db, 21);
 
-  var tmp = box(430, 880, 120, 145, { fill: 'z-box', flows: 'upload backup chats' });
-  tx(446, 912, 'tmp/', 'h2', tmp);
-  tx(446, 938, ['uploads', 'in flight,', 'zip copy'], 'sm', tmp, 21);
+  var thumbs = box(385, 915, 115, 145, { fill: 'z-box', flows: 'upload download manage backup' });
+  tx(399, 947, 'thumbs/', 'h2', thumbs);
+  tx(399, 973, ['320px JPEGs', 'by sha256,', '<= 128 KB'], 'sm', thumbs, 21);
 
-  var blobs = box(565, 880, 160, 145, { fill: 'z-box', flows: 'upload download manage backup' });
-  tx(581, 912, 'blobs/', 'h2', blobs);
-  tx(581, 934, 'files by random id', 'sm', blobs);
-  [[581, 952], [652, 955], [615, 986]].forEach(function (p) {
-    var f = box(p[0], p[1], 56, 26, { r: 6, amp: 0.8, fill: 'z-mini' });
-    tx(p[0] + 28, p[1] + 19, 'file', 'mid lab', f);
+  var blobs = box(520, 915, 125, 145, { fill: 'z-box', flows: 'upload download manage backup chats' });
+  tx(534, 947, 'blobs/', 'h2', blobs);
+  tx(534, 969, 'by random id', 'sm', blobs);
+  [[534, 989], [588, 993], [556, 1023]].forEach(function (p) {
+    var f = box(p[0], p[1], 46, 24, { r: 6, amp: 0.8, fill: 'z-mini' });
+    tx(p[0] + 23, p[1] + 17, 'file', 'mid lab', f);
   });
 
-  var cdir = box(740, 880, 160, 145, { fill: 'z-box', flows: 'chats' });
-  tx(756, 912, 'chats/', 'h2', cdir);
-  tx(756, 938, ['meta.json', 'msgstore-*.db', '+ .db.json'], 'sm', cdir, 21);
+  var tmp = box(670, 915, 100, 145, { fill: 'z-box', flows: 'upload backup chats' });
+  tx(684, 947, 'tmp/', 'h2', tmp);
+  tx(684, 973, ['uploads', 'in flight,', 'zip copy'], 'sm', tmp, 21);
 
-  arrow([[152, 720], [152, 880]], { flows: BK, label: { x: 162, y: 795, t: 'reads keys' } });
-  arrow([[515, 720], [515, 775], [332, 775], [332, 880]], { both: true, flows: 'upload download manage backup', label: { x: 342, y: 805, t: 'metadata' } });
-  arrow([[560, 720], [560, 795], [475, 795], [475, 880]], { flows: 'upload backup', label: { x: 484, y: 855, t: 'part' } });
-  arrow([[645, 720], [645, 880]], { both: true, flows: 'upload download manage backup', label: { x: 653, y: 805, t: 'blobs' } });
-  arrow([[760, 720], [760, 795], [505, 795], [505, 880]], { flows: 'chats' });
-  arrow([[820, 720], [820, 880]], { both: true, flows: 'chats', label: { x: 828, y: 805, t: 'snapshots' } });
-  arrow([[550, 950], [565, 950]], { flows: 'upload backup' });
+  var cdir = box(790, 915, 125, 145, { fill: 'z-box', flows: 'chats' });
+  tx(804, 947, 'chats/', 'h2', cdir);
+  tx(804, 973, ['meta.json', 'msgstore-*.db', '+ .db.json'], 'sm', cdir, 21);
+
+  /* clean, non-crossing lanes between Server (y=720) and Data on disk (y=915) */
+  arrow([[132, 720], [132, 915]], { flows: BK, label: { x: 141, y: 815, t: 'keys' } });
+  arrow([[488, 720], [488, 780], [292, 780], [292, 915]], { both: true, flows: 'upload download manage backup chats', label: { x: 300, y: 815, t: 'metadata' } });
+  arrow([[534, 720], [534, 815], [442, 815], [442, 915]], { both: true, flows: 'upload download manage backup', label: { x: 450, y: 892, t: 'thumbs' } });
+  arrow([[582, 720], [582, 915]], { both: true, flows: 'upload download manage backup chats', label: { x: 590, y: 892, t: 'blobs' } });
+  arrow([[645, 720], [645, 795], [700, 795], [700, 915]], { flows: 'upload backup', label: { x: 707, y: 892, t: 'part' } });
+  arrow([[745, 720], [745, 915]], { flows: 'chats' });
+  arrow([[852, 720], [852, 915]], { both: true, flows: 'chats', label: { x: 860, y: 815, t: 'snapshots' } });
+  arrow([[670, 988], [645, 988]], { flows: 'upload backup' });
 
   /* ---------------- right column: notes ---------------- */
-  var n1 = box(980, 30, 380, 250, { fill: 'z-box', r: 14 });
-  tx(1000, 64, 'Upload, step by step', 'h2', n1);
-  tx(1000, 98, [
+  var n1 = box(990, 30, 370, 250, { fill: 'z-box', r: 14 });
+  tx(1010, 64, 'Upload, step by step', 'h2', n1);
+  tx(1010, 98, [
     '1  Client sends the raw file; its name',
-    '     (and optional X-Sha256) are headers',
+    '     (X-Source, X-Sha256) are headers',
     '2  Router checks login/key, size, disk',
     '3  File service streams it to tmp/ and',
     '     computes SHA-256 (must match X-Sha256)',
@@ -303,17 +310,17 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
     '5  Chats use the same flow via /api/chats/import'
   ], '', n1, 23);
 
-  var f1 = box(980, 300, 380, 78, { fill: 'z-box', r: 14, flows: 'backup chats' });
-  tx(1000, 330, 'Android app (v1)', 'h2', f1);
-  tx(1000, 354, 'WebView + photo & chat backup, uses API key', 'sm', f1);
-  arrow([[980, 336], [742, 336]], { both: true, flows: 'backup chats' });
+  var f1 = box(990, 300, 370, 82, { fill: 'z-box', r: 14, flows: 'backup chats' });
+  tx(1010, 330, 'Android app (v1)', 'h2', f1);
+  tx(1010, 355, 'WebView + photo & chat backup, uses API key', 'sm', f1);
+  arrow([[990, 340], [952, 340], [952, 456], [915, 456]], { both: true, flows: 'backup chats' });
 
-  var n2 = box(980, 405, 380, 355, { fill: 'z-box', r: 14 });
-  tx(1000, 440, 'Rules to keep it tidy', 'h2', n2);
-  tx(1000, 474, [
+  var n2 = box(990, 405, 370, 360, { fill: 'z-box', r: 14 });
+  tx(1010, 440, 'Rules to keep it tidy', 'h2', n2);
+  tx(1010, 474, [
     '• Clients only talk to the API, never data/.',
-    '• Only File service touches blobs/ & stash.db;',
-    '   only Chat service (chats.py) touches chats/.',
+    '• Only File service touches blobs/, thumbs/ &',
+    '   stash.db; only chats.py touches chats/.',
     '• Every /api route checks cookie or API key',
     '   first (except login, logout, session).',
     '   healthz sits outside /api.',
@@ -325,27 +332,27 @@ svg{display:block;width:100%;min-width:1100px;height:auto}
     '   ever receives the plain SQLite copy.'
   ], '', n2, 22);
 
-  var f2 = box(980, 825, 380, 260, { fut: true, r: 14 });
-  tx(1000, 862, 'Planned growth (not built yet)', 'futt', f2);
+  var f2 = box(990, 860, 370, 265, { fut: true, r: 14 });
+  tx(1010, 898, 'Planned growth (not built yet)', 'futt', f2);
   [
     ['Per-user accounts and keys', 'plugs into Auth (app key is shared today)'],
     ['Folders and tags', 'plugs into stash.db + File service'],
     ['Share links', 'plugs into Router + File service'],
-    ['Trash, versions & chat media', 'plugs into File / Chat services']
+    ['Trash and old versions', 'plugs into File service']
   ].forEach(function (it, i) {
-    tx(1000, 902 + i * 44, it[0], '', f2);
-    tx(1000, 923 + i * 44, it[1], 'sm', f2);
+    tx(1010, 938 + i * 44, it[0], '', f2);
+    tx(1010, 959 + i * 44, it[1], 'sm', f2);
   });
 
   /* ---------------- path highlighter ---------------- */
   var texts = {
     all: 'Showing everything. Pick a path to see which parts it uses.',
     login: 'Login: Auth checks the password, then signs a cookie with secret.key and sends it back. The browser attaches that cookie to every later request. The Android app also fetches api.key (GET /api/app-key) once, for background backup.',
-    upload: 'Upload: the file goes browser, Router, File service. It is written to tmp/ while SHA-256 is computed, moved into blobs/, and recorded in stash.db.',
-    download: 'Download and preview: File service looks the file up in stash.db and streams it from blobs/. Range support lets video and audio seek.',
-    backup: 'Phone backup: the Android app hashes each new photo/video, asks GET /api/files/by-hash/<sha256> whether the server already has it, and if not uploads it with the API key and X-Sha256.',
-    manage: 'Rename and delete: a rename only changes stash.db. A delete removes the row and the file in blobs/.',
-    chats: 'WhatsApp chats (alpha v1): the Android app decrypts msgstore*.crypt15 on the phone and POSTs the plain SQLite file to /api/chats/import. chats.py checks the schema, builds an index + .json summary, keeps the newest STASH_CHATS_KEEP snapshots in chats/, and serves /chats (chats.html).'
+    upload: 'Upload: the file goes browser, Router, File service. It is written to tmp/ while SHA-256 is computed, moved into blobs/, and recorded in stash.db (with optional X-Source tag). Small JPEG previews go to thumbs/ via PUT /api/files/by-hash/<sha256>/thumb.',
+    download: 'Download and preview: File service looks the file up in stash.db and streams it from blobs/ (or 320 px grid previews from thumbs/). Range support lets video and audio seek.',
+    backup: 'Phone backup: the Android app hashes each new photo/video, asks GET /api/files/by-hash/<sha256> whether the server already has it, uploads with the API key and X-Sha256, and sends a 320 px JPEG preview.',
+    manage: 'Rename and delete: a rename only changes stash.db. A delete removes the row, the file in blobs/, and the thumbnail in thumbs/ once no file with that hash remains.',
+    chats: 'WhatsApp chats (v1): the Android app decrypts msgstore*.crypt15 on the phone and POSTs the plain SQLite file to /api/chats/import, plus SHA-256-matched chat media with X-Source: whatsapp. chats.py checks the schema, builds an index + .json summary, links media strictly by SHA-256 via vault_lookup(), serves message_thumbnail previews, and powers /chats (chats.html).'
   };
   var chips = Array.prototype.slice.call(document.querySelectorAll('.chip'));
   var note = document.getElementById('note');

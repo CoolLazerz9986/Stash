@@ -34,15 +34,15 @@ Sessions are stateless: `POST /api/logout` only clears the cookie. Changing `STA
 | POST | `/api/logout` | no | clears the cookie |
 | GET | `/api/app-key` | yes | `{"key": "<api key>"}` (empty string when the server has no password and no `STASH_API_KEY`) |
 | GET | `/api/files` | yes | `{"files":[file…],"stats":{"count","bytes","total","free"}}`, newest first. `bytes` = total size of stored files; `total`/`free` = disk of the data folder. Optional `?source=whatsapp` lists only files with that tag, `?source=` (empty) only untagged files; `stats` always cover every file |
-| GET | `/api/files/<id>/thumb` | yes | the small preview picture (`image/jpeg`, at most 128 KB) of a file, `Cache-Control: private, max-age=86400`. `404` if the file has none yet |
-| PUT | `/api/files/by-hash/<sha256>/thumb` | yes | body = a JPEG of at most 128 KB (`Content-Length` required, `Content-Type` ignored). Stores it as the preview of the file(s) with that SHA-256. `201` stored, `404` no such file, `413` too big, `422` not a JPEG. Replaces an earlier preview. The phone app and the website send these (about 320 px wide); only previews are stored, never the other way round |
+| GET | `/api/files/<id>/thumb` | yes | the small preview picture (`image/jpeg`, at most 128 KB) of a file, `Cache-Control: private, max-age=86400`, with `ETag`. `404` if the file or preview does not exist |
+| PUT | `/api/files/by-hash/<sha256>/thumb` | yes | body = a JPEG of at most 128 KB (`Content-Length` required, `Content-Type` ignored). Stores it as the preview of the file(s) with that SHA-256. `201` stored, `404` no such file, `411` missing `Content-Length`, `413` too big, `422` not a JPEG, `507` disk write error. Replaces an earlier preview. The phone app and the website send these (about 320 px wide); only previews are stored, never the other way round |
 | GET | `/api/files/by-hash/<sha256>` | yes | 64 hex chars, case-insensitive (anything else is `404`). `{"exists":bool,"file":file\|null}`. Only `true` if the blob really is on disk. |
 | GET | `/api/files/<id>/download` | yes | attachment. Supports `Range`, `ETag` |
 | GET | `/api/files/<id>/raw` | yes | inline preview. Text-like types are always `text/plain`; SVG is sandboxed; types with no safe inline form are sent as attachments. `?as=text` forces `text/plain` (used for the text/CSV previews) |
 | POST | `/api/upload` | yes | see below. `201` + the file object |
 | POST | `/api/zip` | yes | form body `ids=<id>,<id>,…` (max 5000) or `ids=all` → uncompressed zip. The server builds the whole zip in `<data>/tmp/` first, so it needs free space for a second copy (`507` if not) and nothing arrives until it is built |
 | PATCH | `/api/files/<id>` | yes | body `{"name": "new name"}`. A clash becomes `name (1).ext` |
-| DELETE | `/api/files/<id>` | yes | removes the row and the blob |
+| DELETE | `/api/files/<id>` | yes | removes the row, the blob, and (if no other file shares that SHA-256) the preview thumbnail |
 | GET | `/api/chats/status` | yes | `{"snapshot": snapshot\|null, "maxBytes": int, "keep": int}`. A `404` means the server has no chat support (too old) |
 | GET | `/api/chats` | yes | `{"snapshot": snapshot\|null, "chats": [chat…]}`, newest conversation first |
 | GET | `/api/chats/<chat id>/messages` | yes | `?limit=` (1–200, default 100) `&before=<message id>` `&q=<text>`. `{"messages":[message…],"more":bool}`. Messages are the newest `limit` ones (or the newest before `before`), returned oldest first. `q` keeps messages whose text contains it (case-insensitive, max 100 chars). `400` if `before`/`limit` are not numbers, `404` unknown chat or no snapshot |
@@ -94,7 +94,7 @@ Objects:
 
 ### WhatsApp chat media
 
-The phone also uploads the media files that belong to chat messages (`POST /api/upload` with `X-Source: whatsapp` and `X-Sha256`). For each media row of the decrypted database that belongs to a real chat message (not status updates) it finds the file in WhatsApp's Media folder, hashes it and uploads it **only if its SHA-256 equals the hash WhatsApp recorded for that message**. Files are stored like any other file (hash dedupe, size limit `maxBytes`).
+The phone also uploads the media files that belong to chat messages (`POST /api/upload` with `X-Source: whatsapp` and `X-Sha256`, plus a best-effort `PUT /api/files/by-hash/<sha256>/thumb`). For each media row of the decrypted database that belongs to a real chat message (not status updates) within the selected day window (last 1 day by default, or up to 365 days via `"Back up older media…"`), it finds the file in WhatsApp's Media folder, hashes it and uploads it **only if its SHA-256 equals the hash WhatsApp recorded for that message**. Files are stored like any other file (hash dedupe, size limit `maxBytes`).
 
 The server links a message to its file by that same hash, never by file name: `message.media` = `{mime, name, thumb, file?}`. `file` = `{id, name, mime, size}` is present only when the vault holds a file whose SHA-256 equals the recorded hash of that very message (and the blob is on disk), so a message can only ever load its own file; load it from `/api/files/<file.id>/raw` (or `/download`). `thumb` is `true` when WhatsApp kept a small preview picture for the message.
 
@@ -107,25 +107,25 @@ The server links a message to its file by that same hash, never by file name: `m
 | Code | Meaning here |
 |---|---|
 | 200 / 201 | ok / file or snapshot stored |
-| 400 | bad JSON, bad `Content-Length`, malformed `X-Sha256`, bad `before`/`limit` |
+| 400 | bad JSON, bad `Content-Length`, malformed `X-Sha256`, bad `X-Source`, bad `before`/`limit` |
 | 401 | no or wrong login / key |
-| 404 | unknown route, unknown file or chat id, blob missing on disk, bad hash length, no chat snapshot yet |
+| 404 | unknown route, unknown file or chat id, blob or thumbnail missing on disk, bad hash length, no chat snapshot yet |
 | 409 | a chat import is already running |
-| 411 | upload without `Content-Length` |
-| 413 | upload over `maxBytes` (chats: over the chat limit), or a request body over its limit (64 KB for JSON, 1 MB for the zip form) |
+| 411 | upload or thumbnail `PUT` without `Content-Length` |
+| 413 | upload over `maxBytes` (chats: over the chat limit; thumb: over 128 KB), or a request body over its limit (64 KB for JSON, 1 MB for the zip form) |
 | 416 | `Range` outside the file |
-| 422 | `X-Sha256` doesn't match the received bytes; chat database not readable or not in the WhatsApp format |
+| 422 | `X-Sha256` doesn't match the received bytes; chat database not readable or not in the WhatsApp format; thumbnail is not a JPEG |
 | 429 | rate limited (wrong password / key). Never sent by `GET /api/session` |
 | 500 | server bug (see its log) |
 | 507 | not enough free disk |
 
 ## Backup client algorithm (Android app v1)
 
-For each photo/video not yet recorded as done: hash it (SHA-256) → `GET /api/files/by-hash/<sha>` → if `exists`, record and skip → else `POST /api/upload` with `X-Sha256` → on `201` record it. Files are matched to what was already done by (MediaStore URI, size, modified time). One-way: nothing is ever deleted on the phone or on the server by the backup.
+For each photo/video not yet recorded as done: hash it (SHA-256) → `GET /api/files/by-hash/<sha>` → if `exists`, record and skip → else `POST /api/upload` with `X-Sha256` → on `201`, best-effort `PUT /api/files/by-hash/<sha>/thumb` (320 px JPEG) → record it. Files are matched to what was already done by (MediaStore URI, size, modified time). One-way: nothing is ever deleted on the phone or on the server by the backup.
 A file bigger than `maxBytes` (from `GET /api/session`) is not hashed or uploaded and is **not** recorded, so it is picked up again once the limit is raised. The same goes for a `413` answer.
 
-**Chats:** `GET /api/chats/status` (remember `snapshot.sha256`, `maxBytes`) → find the newest `msgstore*.crypt15` in the folder the user picked → skip if its (server, name, size, modified time) equals the last one sent → decrypt into a temporary file in the app cache while hashing → skip if the hash equals `snapshot.sha256` → skip with a message if bigger than the chat `maxBytes` → `POST /api/chats/import` with `X-Sha256` (the answer can take minutes while the server indexes, so wait up to 15 minutes) → delete the temporary file. The WhatsApp folder is only read.
+**Chats:** `GET /api/chats/status` (remember `snapshot.sha256`, `maxBytes`) → find the newest `msgstore*.crypt15` in the folder the user picked → skip if its (server, name, size, modified time) equals the last one sent (unless forced) → decrypt into a temporary file in the app cache while hashing → skip DB upload if the hash equals `snapshot.sha256`, else skip with a message if bigger than the chat `maxBytes`, else `POST /api/chats/import` with `X-Sha256` (the answer can take minutes while the server indexes, so wait up to 15 minutes) → run the media pass over `message_media` in the decrypted DB (last 1 day by default, or up to 365 days), verifying `file_hash` and uploading with `X-Source: whatsapp` + best-effort `PUT .../thumb` → delete the temporary file. The WhatsApp folder is only read.
 
 ## Compatibility
 
-`api` 1 = original website API. `api` 2 = adds API key auth, `/api/app-key`, `/api/files/by-hash/…`, `X-Sha256`, and the `name`/`api` fields in `/api/session`, plus the chat routes above (all additions, so the number stays 2). Nothing from version 1 was removed or changed.
+`api` 1 = original website API. `api` 2 = adds API key auth, `/api/app-key`, `/api/files/by-hash/…`, `X-Sha256`, thumbnails (`/thumb`), `X-Source` / `?source=`, and the chat routes above (all additions, so the number stays 2). Nothing from version 1 was removed or changed.
