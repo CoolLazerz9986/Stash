@@ -6,7 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
+import android.widget.Toast
 import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -44,6 +47,8 @@ object Downloader {
             .putExtra(DownloadService.X_NAME, fallbackName)
         try {
             app.startForegroundService(i)
+            // posted to the main thread: [start] is also called from the website bridge's thread
+            Handler(Looper.getMainLooper()).post { Toast.makeText(app, "Downloading…", Toast.LENGTH_SHORT).show() }
         } catch (e: Exception) {
             Events.post(Events.Msg("download", Events.Kind.ERROR, "Download could not start: ${e.message}"))
         }
