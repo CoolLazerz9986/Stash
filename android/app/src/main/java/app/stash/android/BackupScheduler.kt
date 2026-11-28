@@ -4,6 +4,7 @@ package app.stash.android
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import androidx.lifecycle.LifecycleOwner
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
@@ -12,7 +13,9 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 /** Turns the backup settings into WorkManager jobs. Call [apply] / [applyChat] again whenever a setting changes. */
@@ -50,7 +53,7 @@ object BackupScheduler {
         val p = Prefs(ctx)
         val waiting = waitingForWifi(ctx)
         fun idle(s: String) = s.isEmpty() || s == WIFI_WAIT || s == "Starting…" || s == "Waiting for the next run"
-        if (photos && p.backupEnabled) {
+        if (photos && (p.backupEnabled || force || p.status == WIFI_WAIT)) {
             if (waiting && (force || idle(p.status))) p.status = WIFI_WAIT
             else if (!waiting && p.status == WIFI_WAIT) p.status = ""
         }
@@ -61,36 +64,63 @@ object BackupScheduler {
     }
 
     /** (Re)schedules the periodic job, or cancels everything when the schedule is Off. */
-    fun apply(ctx: Context, delayFirstRun: Boolean = false) {
+    fun apply(ctx: Context) {
         val p = Prefs(ctx)
         val wm = WorkManager.getInstance(ctx)
         if (!p.backupEnabled) {
-            wm.cancelUniqueWork(PERIODIC)
-            wm.cancelUniqueWork(NOW)
+            wm.cancelUniqueWork(PERIODIC) // a run started with "Back up now" is left alone
             return
         }
         val request = PeriodicWorkRequestBuilder<BackupWorker>(p.backupHours.toLong(), TimeUnit.HOURS)
             .setConstraints(constraints(p, p.chargingOnly))
-            .apply { if (delayFirstRun) setInitialDelay(p.backupHours.toLong(), TimeUnit.HOURS) }
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.MINUTES)
             .build()
         wm.enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
         noteWifiWait(ctx)
     }
 
-    /** Stops the phone backup that is running or queued. The schedule stays on: next run one interval from now. */
+    /** True while a phone backup is running, queued by "Back up now", or waiting to retry. */
+    fun isBusy(now: List<WorkInfo>, periodic: List<WorkInfo>): Boolean =
+        now.any { !it.state.isFinished } ||
+            periodic.any { it.state == WorkInfo.State.RUNNING || (it.state == WorkInfo.State.ENQUEUED && it.runAttemptCount > 0) }
+
+    fun watchRuns(ctx: Context, owner: LifecycleOwner, onChange: (Boolean) -> Unit) {
+        val wm = WorkManager.getInstance(ctx)
+        var now: List<WorkInfo> = emptyList()
+        var periodic: List<WorkInfo> = emptyList()
+        wm.getWorkInfosForUniqueWorkLiveData(NOW).observe(owner) { now = it; onChange(isBusy(now, periodic)) }
+        wm.getWorkInfosForUniqueWorkLiveData(PERIODIC).observe(owner) { periodic = it; onChange(isBusy(now, periodic)) }
+    }
+
+    /** Stops the phone backup that is running or queued. A schedule, if one is on, is queued again. */
     fun cancelRun(ctx: Context) {
         val wm = WorkManager.getInstance(ctx)
         wm.cancelUniqueWork(NOW)
         wm.cancelUniqueWork(PERIODIC)
-        apply(ctx, delayFirstRun = true)
+        apply(ctx)
     }
 
-    /** A one-off run (when backup is switched on or a folder is added): runs as soon as the network rule is met (ignores the charging rule, you asked for it). */
+    private fun nextMidnight(): Long = Calendar.getInstance().apply {
+        add(Calendar.DAY_OF_YEAR, 1)
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    /** The Cancel button: with a schedule on, nothing scheduled runs again today. */
+    fun cancelByUser(ctx: Context) {
+        val p = Prefs(ctx)
+        p.pausedUntil = if (p.backupEnabled) nextMidnight() else 0L // before cancelRun, so the re-queued job sees it
+        cancelRun(ctx)
+    }
+
+    /** "Back up now" (also after a schedule is switched on or a folder is added): runs as soon as the network rule is met (ignores the charging rule, you asked for it). */
     fun runNow(ctx: Context) {
         val p = Prefs(ctx)
         val request = OneTimeWorkRequestBuilder<BackupWorker>()
             .setConstraints(constraints(p, false))
+            .setInputData(Data.Builder().putBoolean(BackupWorker.MANUAL, true).build())
             .build()
         WorkManager.getInstance(ctx).enqueueUniqueWork(NOW, ExistingWorkPolicy.KEEP, request)
         noteWifiWait(ctx, chats = false, force = true)

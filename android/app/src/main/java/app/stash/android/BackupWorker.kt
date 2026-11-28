@@ -47,7 +47,11 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
     }
 
     private suspend fun backup(): Result {
-        if (!prefs.backupEnabled || prefs.serverUrl.isEmpty()) return Result.success()
+        if (prefs.serverUrl.isEmpty()) return Result.success()
+        // a scheduled run needs the schedule on and not cancelled for today; "Back up now" needs neither
+        if (!inputData.getBoolean(MANUAL, false) &&
+            (!prefs.backupEnabled || System.currentTimeMillis() < prefs.pausedUntil)
+        ) return Result.success()
         if (prefs.fileTrees.isEmpty()) return stop("Choose at least one folder to back up")
 
         val base = prefs.serverUrl
@@ -59,7 +63,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         }
         if (session.api < 2) return stop("The server needs the updated server.py")
         if (session.authRequired && prefs.apiKey.isEmpty()) {
-            return stop("Not connected: set the schedule to Off, then pick it again while logged in", alert = true)
+            return stop("Not connected: tap Back up now while logged in", alert = true)
         }
         val limit = session.maxBytes
 
@@ -112,7 +116,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
                 failed++; lastProblem = "${item.name}: ${e.message}"
             } catch (e: StashApi.ApiException) {
                 when (e.status) {
-                    401, 403 -> return stop("The server rejected the key: set the schedule to Off, then pick it again", alert = true)
+                    401, 403 -> return stop("The server rejected the key: tap Back up now while logged in", alert = true)
                     429 -> { prefs.status = "The server is rate limiting this phone. Will retry."; return Result.retry() }
                     507 -> return stop("The server's disk is full", alert = true)
                     413 -> tooBig++ // not recorded: tried again next run, in case the limit was raised meanwhile
@@ -228,6 +232,7 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
     }
 
     companion object {
+        const val MANUAL = "manual"
         private val RUNNING = AtomicBoolean(false)
         private const val NOTIF_PROGRESS = 41
         private const val NOTIF_ALERT = 42

@@ -31,7 +31,10 @@ class BackupActivity : ComponentActivity() {
     private lateinit var foldersButton: android.widget.Button
     private lateinit var typesButton: android.widget.Button
     private lateinit var excludeButton: android.widget.Button
+    private lateinit var backupButton: android.widget.Button
     private lateinit var cancelButton: android.widget.Button
+    private var busy = false // a phone backup is running or queued
+    private var connecting = false
     private lateinit var chatSwitch: Switch
     private lateinit var chatKeyField: EditText
     private lateinit var chatFolderButton: android.widget.Button
@@ -50,7 +53,7 @@ class BackupActivity : ComponentActivity() {
             try {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 prefs.fileTrees = prefs.fileTrees + uri.toString()
-                if (prefs.backupEnabled) BackupScheduler.runNow(this)
+                if (prefs.backupEnabled && System.currentTimeMillis() >= prefs.pausedUntil) BackupScheduler.runNow(this)
             } catch (e: SecurityException) {
                 toast("Could not keep access to that folder: ${e.message}")
             }
@@ -83,7 +86,8 @@ class BackupActivity : ComponentActivity() {
         foldersButton = Ui.button(this, "") { chooseFolders() }
         typesButton = Ui.button(this, "") { chooseTypes() }
         excludeButton = Ui.button(this, "") { chooseExclusions() }
-        cancelButton = Ui.button(this, "Cancel current backup", Ui.Kind.DANGER) { cancelBackup() }
+        backupButton = Ui.button(this, "Back up now", Ui.Kind.PRIMARY) { backupNow() }
+        cancelButton = Ui.button(this, "Cancel backup", Ui.Kind.DANGER) { cancelBackup() }
 
         // Same layout idea as the website: grey page, one rounded card per group.
         val serverCard = Ui.card(
@@ -104,6 +108,7 @@ class BackupActivity : ComponentActivity() {
             Ui.toggle(this, "Only while charging", prefs.chargingOnly) { prefs.chargingOnly = it; applyRules() },
             Ui.muted(this, "Wi-Fi and charging rules also apply to chat backup."),
             statusText,
+            backupButton,
             cancelButton,
             Ui.gap(this, 4),
         )
@@ -157,6 +162,10 @@ class BackupActivity : ComponentActivity() {
                 serverCard, backupCard, note, chatCard,
             ))
         )
+        BackupScheduler.watchRuns(this, this) { running ->
+            busy = running
+            refresh()
+        }
     }
 
     override fun onStart() {
@@ -223,7 +232,10 @@ class BackupActivity : ComponentActivity() {
         typesButton.text = "File types: " + if (off == 0) "all" else "${FileFilter.Type.values().size - off} of ${FileFilter.Type.values().size}"
         excludeButton.text = "Excluded extensions: " +
             FileFilter.parseExtensions(prefs.excludedExtensions).joinToString(", ").ifEmpty { "none" }
-        cancelButton.isEnabled = prefs.backupEnabled
+        backupButton.visibility = if (busy) android.view.View.GONE else android.view.View.VISIBLE
+        cancelButton.visibility = if (busy) android.view.View.VISIBLE else android.view.View.GONE
+        backupButton.isEnabled = !connecting
+        scheduleButton.isEnabled = !connecting
         statusText.text = buildString {
             append("Status: ").append(prefs.status.ifEmpty { if (prefs.backupEnabled) "Waiting for the next run" else "Off" })
             if (prefs.lastRun > 0) append("\nLast finished: ").append(DateFormat.getDateTimeInstance().format(Date(prefs.lastRun)))
@@ -269,9 +281,10 @@ class BackupActivity : ComponentActivity() {
     }
 
     private fun setSchedule(hours: Int) {
-        if (hours == 0) {
+        if (hours == 0) { // also stops a run that is going on
             prefs.backupHours = 0
-            BackupScheduler.apply(this)
+            prefs.pausedUntil = 0
+            BackupScheduler.cancelRun(this)
             prefs.status = "Off"
             refresh()
         } else if (prefs.backupEnabled) {
@@ -279,13 +292,38 @@ class BackupActivity : ComponentActivity() {
             BackupScheduler.apply(this)
             refresh()
         } else {
-            enable(hours)
+            connectThen {
+                if (prefs.enabledSince == 0L) prefs.enabledSince = System.currentTimeMillis()
+                prefs.pausedUntil = 0
+                prefs.backupHours = hours
+                BackupScheduler.apply(this)
+                startRun()
+            }
         }
     }
 
+    /** Runs a backup right away, with or without a schedule. Also ends today's pause after a Cancel. */
+    private fun backupNow() {
+        connectThen {
+            if (prefs.enabledSince == 0L) prefs.enabledSince = System.currentTimeMillis()
+            prefs.pausedUntil = 0
+            startRun()
+        }
+    }
+
+    private fun startRun() {
+        prefs.status = "Starting…"
+        BackupScheduler.runNow(this)
+        if (BackupScheduler.waitingForWifi(this)) queued("Backup")
+    }
+
     private fun cancelBackup() {
-        BackupScheduler.cancelRun(this)
-        prefs.status = "Cancelled. The schedule stays on; uploaded files are kept."
+        BackupScheduler.cancelByUser(this)
+        prefs.status = if (prefs.backupEnabled) {
+            "Cancelled. Scheduled backups are paused for today. Uploaded files are kept."
+        } else {
+            "Cancelled. Uploaded files are kept."
+        }
         refresh()
     }
 
@@ -307,33 +345,29 @@ class BackupActivity : ComponentActivity() {
         }
     }
 
-    /** Connects to the server (fetching the API key through the website login) and starts the schedule. */
-    private fun enable(hours: Int) {
+    /** Checks the folders and the server, then runs [then] on the main thread. */
+    private fun connectThen(then: () -> Unit) {
+        if (connecting) return
         if (prefs.fileTrees.isEmpty()) {
             toast("Choose at least one folder first")
             return
         }
         if (Build.VERSION.SDK_INT >= 33 && !Perms.canNotify(this)) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        connecting = true
+        val before = prefs.status
         prefs.status = "Connecting…"
+        refresh()
         Thread {
-            try {
-                connect()
-                runOnUiThread {
-                    prefs.enabledSince = System.currentTimeMillis()
-                    prefs.backupHours = hours
-                    prefs.status = "Starting…"
-                    BackupScheduler.apply(this)
-                    BackupScheduler.runNow(this)
-                    refresh()
-                    if (BackupScheduler.waitingForWifi(this)) queued("Backup")
+            val error = try { connect(); null } catch (e: Exception) { e.message ?: "Could not connect" }
+            runOnUiThread {
+                connecting = false
+                if (error == null) {
+                    then()
+                } else {
+                    prefs.status = before
+                    toast(error)
                 }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    prefs.backupHours = 0
-                    prefs.status = "Off"
-                    toast(e.message ?: "Could not connect")
-                    refresh()
-                }
+                refresh()
             }
         }.start()
     }

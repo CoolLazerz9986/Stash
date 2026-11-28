@@ -94,7 +94,7 @@ class SetupActivity : ComponentActivity() {
             prefs.backupHours = 0
             prefs.apiKey = ""
             BackupDb(this).clear()
-            BackupScheduler.apply(this)
+            BackupScheduler.cancelRun(this)
         }
         prefs.serverUrl = base
         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))

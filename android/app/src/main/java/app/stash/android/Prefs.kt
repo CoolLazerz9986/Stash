@@ -54,6 +54,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("excludedExtensions", "") ?: ""
         set(v) = sp.edit().putString("excludedExtensions", v).apply()
 
+    /** Set by Cancel while a schedule is on: scheduled runs are skipped until this time (the next midnight). */
+    var pausedUntil: Long
+        get() = sp.getLong("pausedUntil", 0L)
+        set(v) = sp.edit().putLong("pausedUntil", v).apply()
+
     var enabledSince: Long
         get() = sp.getLong("enabledSince", 0L)
         set(v) = sp.edit().putLong("enabledSince", v).apply()
