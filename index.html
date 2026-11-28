@@ -191,6 +191,10 @@ dialog::backdrop{background:rgba(8,10,16,.6);backdrop-filter:blur(3px)}
 .dlg-body h3{margin:0}
 .dlg-body p{margin:0;color:var(--muted)}
 .dlg-body .end{display:flex;flex-direction:row-reverse;gap:8px;justify-content:flex-start;margin-top:4px}
+/* file details (the "Details" dialog on a phone; the same rows are in the viewer's side panel on a computer) */
+.dlg-body dl{margin:0;display:grid;gap:10px}
+.dlg-body dt{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.dlg-body dd{margin:2px 0 0;word-break:break-all}
 #viewer{width:min(1180px,calc(100vw - 24px));height:min(780px,calc(100vh - 24px));overflow:hidden}
 #viewer[open]{display:flex;flex-direction:column}
 .vbar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
@@ -337,9 +341,11 @@ dialog::backdrop{background:rgba(8,10,16,.6);backdrop-filter:blur(3px)}
   .uploads.open .ujobs{display:block;max-height:45vh}
   #toasts{bottom:calc(84px + env(safe-area-inset-bottom))}
 
-  /* viewer: the whole screen; the buttons in a row underneath; tap the picture to hide them */
+  /* viewer: the whole screen; the buttons in a row underneath; tap the picture to hide them.
+     The top bar's Download icon gives way to a Details icon (Download stays in the row underneath). */
   #viewer{width:100vw;max-width:100vw;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;margin:0;border-radius:0}
   .vbar{padding:6px 8px 6px 12px}
+  .vbar .vdl{display:none}
   .vbody{flex-direction:column}
   .stage{min-height:0}
   .info{display:flex;flex:none;width:auto;flex-direction:row;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-left:0;border-top:1px solid var(--line)}
@@ -531,7 +537,8 @@ const ICONS = {
   plus:'M12 5v14 M5 12h14', more:'M12 5h.01 M12 12h.01 M12 19h.01',
   refresh:'M23 4v6h-6 M1 20v-6h6 M3.5 9a9 9 0 0 1 14.9-3.4L23 10 M1 14l4.6 4.4A9 9 0 0 0 20.5 15',
   sliders:'M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6',
-  chat:'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'
+  chat:'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  info:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M12 16v-4 M12 8h.01'
 };
 function ic(name){
   const s = document.createElementNS('http://www.w3.org/2000/svg','svg');
@@ -943,6 +950,29 @@ function stepViewer(d){
   vStep = setTimeout(() => { vStep = 0; renderViewer(d); }, 120); // quick presses in a row: only the last one is drawn
 }
 
+/* The file's details (size, type, source, upload time, SHA-256). Shown in the viewer's side panel on a computer
+   and in the "Details" dialog on a phone, where the side panel has no room. */
+function metaRows(f){
+  return [
+    h('div',{}, h('dt',{text:'Name'}), h('dd',{text:f.name})),
+    h('div',{}, h('dt',{text:'Size'}), h('dd',{text:fmtBytes(f.size)+' ('+f.size.toLocaleString()+' bytes)'})),
+    h('div',{}, h('dt',{text:'Type'}), h('dd',{text:f.mime})),
+    isWa(f) ? h('div',{}, h('dt',{text:'Source'}), h('dd',{text:'WhatsApp'})) : null,
+    h('div',{}, h('dt',{text:'Uploaded'}), h('dd',{text:fmtFull(f.created)})),
+    h('div',{}, h('dt',{text:'SHA-256 (tap to copy)'}), h('dd',{class:'mono',text:f.sha256,onclick:async()=>{ try { await navigator.clipboard.writeText(f.sha256); toast('Checksum copied'); } catch { toast('Copy not available','err'); } }}))
+  ];
+}
+function showInfo(f){
+  const d = $('#dlg');
+  d.replaceChildren(h('form',{method:'dialog',class:'dlg-body'},
+    h('h3',{text:'Details'}),
+    h('dl',{}, metaRows(f)),
+    h('div',{class:'end'}, h('button',{class:'btn primary',value:'ok',text:'Close'}))));
+  d.returnValue = '';
+  d.onclose = null;
+  d.showModal();
+}
+
 async function renderViewer(dir){
   const f = vList[vIdx], k = kindOf(f), kind = previewOf(f), token = ++vToken;
   const v = $('#viewer');
@@ -978,12 +1008,7 @@ async function renderViewer(dir){
   } else fallback('No preview for this file type — you can still download it.');
 
   const info = h('aside',{class:'info'},
-    h('dl',{},
-      h('div',{}, h('dt',{text:'Size'}), h('dd',{text:fmtBytes(f.size)+' ('+f.size.toLocaleString()+' bytes)'})),
-      h('div',{}, h('dt',{text:'Type'}), h('dd',{text:f.mime})),
-      isWa(f) ? h('div',{}, h('dt',{text:'Source'}), h('dd',{text:'WhatsApp'})) : null,
-      h('div',{}, h('dt',{text:'Uploaded'}), h('dd',{text:fmtFull(f.created)})),
-      h('div',{}, h('dt',{text:'SHA-256 (click to copy)'}), h('dd',{class:'mono',text:f.sha256,onclick:async e=>{ try { await navigator.clipboard.writeText(f.sha256); toast('Checksum copied'); } catch { toast('Copy not available','err'); } }}))),
+    h('dl',{}, metaRows(f).slice(1)), // the side panel already sits next to the name in the top bar
     h('div',{class:'btns'},
       h('button',{class:'btn primary',onclick:()=>download(f)}, ic('download'), 'Download'),
       h('button',{class:'btn',onclick:async()=>{ const nf = await renameFile(f); if (nf) { const i = vList.findIndex(x=>x.id===f.id); if (i>=0) vList[i] = nf; renderViewer(); } }}, ic('edit'), 'Rename'),
@@ -993,7 +1018,9 @@ async function renderViewer(dir){
     h('div',{class:'vbar'}, h('div',{class:'tile k-'+k,style:'width:32px;height:32px'}, ic(k)),
       h('div',{class:'name',title:f.name,text:f.name}),
       h('span',{class:'sub',text:(vIdx+1)+' / '+vList.length}),
-      h('button',{class:'btn ghost icon sm',title:'Download',onclick:()=>download(f)}, ic('download')),
+      /* phone: Details (the side panel is hidden there). Download keeps its button in the row underneath. */
+      h('button',{class:'btn ghost icon sm ph',title:'Details','aria-label':'Details',onclick:()=>showInfo(f)}, ic('info')),
+      h('button',{class:'btn ghost icon sm vdl',title:'Download',onclick:()=>download(f)}, ic('download')),
       h('button',{class:'btn ghost icon sm',title:'Close (Esc)',onclick:()=>v.close()}, ic('x'))),
     h('div',{class:'vbody'}, stage, info));
 }
